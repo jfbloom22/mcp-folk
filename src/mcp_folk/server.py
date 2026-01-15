@@ -179,10 +179,11 @@ async def get_person_details(
 ) -> dict[str, Any]:
     """Get full details for a person by their ID.
 
-    Use find_person first to get the ID, then this for complete information.
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results.
 
     Args:
-        person_id: The person's ID from find_person
+        person_id: The person's Folk ID from find_person (NOT their name)
 
     Returns:
         Full person details including all fields, notes count, etc.
@@ -214,10 +215,11 @@ async def get_company_details(
 ) -> dict[str, Any]:
     """Get full details for a company by its ID.
 
-    Use find_company first to get the ID, then this for complete information.
+    IMPORTANT: You must call find_company first to get the company_id.
+    The company_id must be a valid Folk ID from find_company results.
 
     Args:
-        company_id: The company's ID from find_company
+        company_id: The company's Folk ID from find_company (NOT the company name)
 
     Returns:
         Full company details including all fields.
@@ -468,10 +470,11 @@ async def update_person(
 ) -> dict[str, Any]:
     """Update an existing person's information.
 
-    Use find_person first to get the ID.
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results.
 
     Args:
-        person_id: The person's ID
+        person_id: The person's Folk ID from find_person (NOT their name)
         first_name: New first name (or None to keep existing)
         last_name: New last name
         email: New email (replaces existing)
@@ -523,10 +526,11 @@ async def update_company(
 ) -> dict[str, Any]:
     """Update an existing company's information.
 
-    Use find_company first to get the ID.
+    IMPORTANT: You must call find_company first to get the company_id.
+    The company_id must be a valid Folk ID from find_company results.
 
     Args:
-        company_id: The company's ID
+        company_id: The company's Folk ID from find_company (NOT the company name)
         name: New company name
         industry: New industry
         website: New website URL
@@ -563,10 +567,12 @@ async def delete_person(
 ) -> dict[str, Any]:
     """Delete a person from the CRM.
 
-    Use find_person first to get the ID. This action cannot be undone.
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results.
+    This action cannot be undone.
 
     Args:
-        person_id: The person's ID to delete
+        person_id: The person's Folk ID from find_person (NOT their name)
 
     Returns:
         {"id": "...", "deleted": true}
@@ -588,10 +594,12 @@ async def delete_company(
 ) -> dict[str, Any]:
     """Delete a company from the CRM.
 
-    Use find_company first to get the ID. This action cannot be undone.
+    IMPORTANT: You must call find_company first to get the company_id.
+    The company_id must be a valid Folk ID from find_company results.
+    This action cannot be undone.
 
     Args:
-        company_id: The company's ID to delete
+        company_id: The company's Folk ID from find_company (NOT the company name)
 
     Returns:
         {"id": "...", "deleted": true}
@@ -620,10 +628,12 @@ async def add_note(
 ) -> dict[str, Any]:
     """Add a note to a person.
 
-    Use find_person first to get the ID.
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results.
+    Do NOT use names or made-up IDs.
 
     Args:
-        person_id: The person's ID
+        person_id: The person's Folk ID from find_person (NOT their name)
         content: Note content
 
     Returns:
@@ -651,8 +661,10 @@ async def get_notes(
 ) -> dict[str, Any]:
     """Get notes for a person.
 
+    IMPORTANT: You must call find_person first to get the person_id.
+
     Args:
-        person_id: The person's ID
+        person_id: The person's Folk ID from find_person (NOT their name)
         limit: Maximum notes to return (default 10)
 
     Returns:
@@ -686,10 +698,12 @@ async def set_reminder(
 ) -> dict[str, Any]:
     """Set a reminder for a person.
 
-    Use find_person first to get the ID.
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results (e.g., "per_abc123").
+    Do NOT use names, slugs, or made-up IDs - they will fail with "Invalid input".
 
     Args:
-        person_id: The person's ID
+        person_id: The person's Folk ID from find_person (NOT their name)
         reminder: What to be reminded about
         when: When to trigger (ISO 8601 datetime, e.g., "2024-12-25T09:00:00Z")
 
@@ -720,8 +734,11 @@ async def log_interaction(
 ) -> dict[str, Any]:
     """Log an interaction with a person.
 
+    IMPORTANT: You must call find_person first to get the person_id.
+    The person_id must be a valid Folk ID from find_person results.
+
     Args:
-        person_id: The person's ID
+        person_id: The person's Folk ID from find_person (NOT their name)
         interaction_type: Type of interaction (e.g., "email", "meeting", "call")
         when: When it occurred (ISO 8601 datetime)
 
