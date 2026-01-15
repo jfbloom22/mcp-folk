@@ -1,6 +1,7 @@
 """Async HTTP client for Folk API."""
 
 import os
+from datetime import UTC
 from typing import Any
 
 import aiohttp
@@ -472,10 +473,11 @@ class FolkClient:
 
         # Parse the ISO datetime
         dt = datetime.fromisoformat(trigger_time.replace("Z", "+00:00"))
-        # Format as iCalendar DTSTART (use UTC)
-        dtstart = dt.strftime("%Y%m%dT%H%M%S")
+        # Convert to UTC and format as iCalendar DTSTART with Z suffix
+        dt_utc = dt.astimezone(UTC)
+        dtstart = dt_utc.strftime("%Y%m%dT%H%M%SZ")
         # Create a one-time reminder (COUNT=1)
-        recurrence_rule = f"DTSTART;TZID=UTC:{dtstart}\nRRULE:FREQ=DAILY;COUNT=1"
+        recurrence_rule = f"DTSTART:{dtstart}\nRRULE:FREQ=DAILY;COUNT=1"
 
         body: dict[str, Any] = {
             "entity": {"id": entity_id},
