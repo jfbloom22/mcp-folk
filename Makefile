@@ -2,7 +2,7 @@
 BUNDLE_NAME = mcp-folk
 VERSION ?= 0.1.0
 
-.PHONY: help install dev-install format format-check lint lint-fix typecheck test test-cov clean run check all
+.PHONY: help install dev-install format format-check lint lint-fix typecheck test test-cov clean run check all pack
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -53,6 +53,17 @@ clean: ## Clean up build artifacts and cache
 
 run: ## Run the MCP server in stdio mode
 	uv run python -m mcp_folk.server
+
+pack: ## Build MCPB bundle for local testing
+	@echo "Vendoring dependencies..."
+	@rm -rf deps/
+	@uv pip install --target ./deps --only-binary :all: . 2>/dev/null || uv pip install --target ./deps .
+	@echo "Packing bundle..."
+	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+	ARCH=$$(uname -m); \
+	case "$$ARCH" in x86_64) ARCH="amd64";; esac; \
+	mcpb pack . "$(BUNDLE_NAME)-$(VERSION)-$$OS-$$ARCH.mcpb"
+	@echo "Done! Bundle ready for testing"
 
 check: format-check lint typecheck test ## Run all checks
 
