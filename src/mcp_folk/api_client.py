@@ -147,10 +147,14 @@ class FolkClient:
             "combinator": combinator,
         }
 
-        # Add filter params
+        # Add filter params (serialize nested dicts to bracket notation)
         if filters:
             for key, value in filters.items():
-                params[f"filter[{key}]"] = value
+                if isinstance(value, dict):
+                    for op, op_value in value.items():
+                        params[f"filter[{key}][{op}]"] = op_value
+                else:
+                    params[f"filter[{key}]"] = value
 
         data = await self._request("GET", "/people", params=params)
         response = PersonListResponse(**data)
@@ -260,9 +264,14 @@ class FolkClient:
             "combinator": combinator,
         }
 
+        # Add filter params (serialize nested dicts to bracket notation)
         if filters:
             for key, value in filters.items():
-                params[f"filter[{key}]"] = value
+                if isinstance(value, dict):
+                    for op, op_value in value.items():
+                        params[f"filter[{key}][{op}]"] = op_value
+                else:
+                    params[f"filter[{key}]"] = value
 
         data = await self._request("GET", "/companies", params=params)
         response = CompanyListResponse(**data)
@@ -382,7 +391,7 @@ class FolkClient:
     ) -> Note:
         """Create a new note."""
         body: dict[str, Any] = {
-            "entityId": entity_id,
+            "entity": {"id": entity_id},
             "content": content,
             "visibility": visibility,
         }
@@ -451,7 +460,7 @@ class FolkClient:
     ) -> Reminder:
         """Create a new reminder."""
         body: dict[str, Any] = {
-            "entityId": entity_id,
+            "entity": {"id": entity_id},
             "name": name,
             "triggerTime": trigger_time,
             "visibility": visibility,
@@ -562,9 +571,14 @@ class FolkClient:
             "combinator": combinator,
         }
 
+        # Add filter params (serialize nested dicts to bracket notation)
         if filters:
             for key, value in filters.items():
-                params[f"filter[{key}]"] = value
+                if isinstance(value, dict):
+                    for op, op_value in value.items():
+                        params[f"filter[{key}][{op}]"] = op_value
+                else:
+                    params[f"filter[{key}]"] = value
 
         data = await self._request("GET", f"/groups/{group_id}/{object_type}", params=params)
         response = DealListResponse(**data)
@@ -580,7 +594,7 @@ class FolkClient:
     ) -> Interaction:
         """Create a new interaction."""
         body: dict[str, Any] = {
-            "entityId": entity_id,
+            "entity": {"id": entity_id},
             "interactionType": interaction_type,
             "occurredAt": occurred_at,
         }

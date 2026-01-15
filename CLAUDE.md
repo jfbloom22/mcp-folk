@@ -44,16 +44,61 @@ API key configured via manifest `user_config`, not hardcoded:
 
 ## Available Tools
 
-| Category | Tools |
-|----------|-------|
-| People | `list_people`, `get_person`, `create_person`, `update_person`, `delete_person`, `search_people` |
-| Companies | `list_companies`, `get_company`, `create_company`, `update_company`, `delete_company`, `search_companies` |
-| Notes | `list_notes`, `get_note`, `create_note`, `update_note`, `delete_note` |
-| Reminders | `list_reminders`, `get_reminder`, `create_reminder`, `update_reminder`, `delete_reminder` |
-| Groups | `list_groups` |
-| Users | `list_users`, `get_current_user`, `get_user` |
-| Deals | `list_deals` |
-| Interactions | `create_interaction` |
+AI-friendly tools designed for minimal token usage and intent-based operations.
+
+### Search (Tier 1 - Use First)
+
+| Tool | Purpose | Returns |
+|------|---------|---------|
+| `find_person(name)` | Find people by name | `{found, matches: [{id, name, email}], total}` |
+| `find_company(name)` | Find companies by name | `{found, matches: [{id, name, industry}], total}` |
+
+### Details (Tier 2 - After Finding)
+
+| Tool | Purpose |
+|------|---------|
+| `get_person_details(person_id)` | Full person info after finding |
+| `get_company_details(company_id)` | Full company info after finding |
+
+### Browse (Tier 3 - Exploration)
+
+| Tool | Purpose |
+|------|---------|
+| `browse_people(page, per_page)` | Paginated list of all people |
+| `browse_companies(page, per_page)` | Paginated list of all companies |
+
+### Actions (Tier 4 - Mutations)
+
+| Tool | Purpose |
+|------|---------|
+| `add_person(first_name, ...)` | Create new person |
+| `add_company(name, ...)` | Create new company |
+| `update_person(person_id, ...)` | Update person fields |
+| `update_company(company_id, ...)` | Update company fields |
+| `delete_person(person_id)` | Delete a person |
+| `delete_company(company_id)` | Delete a company |
+
+### Notes & Reminders (Tier 5)
+
+| Tool | Purpose |
+|------|---------|
+| `add_note(person_id, content)` | Add note to person |
+| `get_notes(person_id)` | Get notes for person |
+| `set_reminder(person_id, reminder, when)` | Set a reminder |
+| `log_interaction(person_id, type, when)` | Log an interaction |
+
+### Utility
+
+| Tool | Purpose |
+|------|---------|
+| `whoami()` | Get current authenticated user |
+
+## Design Principles
+
+- **Minimal payloads**: Search returns `{id, name, email}` not full records
+- **Two-phase lookup**: `find_person` then `get_person_details`
+- **Boolean answers**: `{found: true/false}` for existence checks
+- **Intent-based**: Tools match what AI wants to do, not REST operations
 
 ## Folk API Reference
 
@@ -91,23 +136,17 @@ git tag v0.1.0 && git push origin v0.1.0
 gh release create v0.1.0 --title "v0.1.0" --notes "- Initial release"
 ```
 
-## Local Testing with mpak
+## Adding to Claude Code
 
 ```bash
-mpak config set @nimblebraininc/folk FOLK_API_KEY=your_key_here
-mpak bundle run @nimblebraininc/folk
-```
+# Configure API key
+mpak config set @nimblebraininc/folk api_key=your_key_here
 
-Claude Code config (`~/.claude/settings.json`):
-```json
-{
-  "mcpServers": {
-    "folk": {
-      "command": "mpak",
-      "args": ["bundle", "run", "@nimblebraininc/folk"]
-    }
-  }
-}
+# From registry (published)
+claude mcp add folk -- mpak run @nimblebraininc/folk
+
+# Local development (after make pack)
+claude mcp add folk -- mpak run --local /path/to/mcp-folk-0.1.0-darwin-arm64.mcpb
 ```
 
 ## Adding New Endpoints

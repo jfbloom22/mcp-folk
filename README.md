@@ -4,42 +4,42 @@ An MCP (Model Context Protocol) server that provides access to [Folk CRM](https:
 
 ## Features
 
-- **People Management**: List, create, update, delete, and search people
-- **Company Management**: List, create, update, delete, and search companies
-- **Notes**: Create and manage notes on people and companies
-- **Reminders**: Set up and manage reminders with recurrence support
-- **Groups**: List workspace groups
-- **Users**: List workspace users and get current user
-- **Deals**: List deals in groups
-- **Interactions**: Log interactions with contacts
+- **Smart Search**: Find people and companies by name with minimal token usage
+- **Two-Phase Lookup**: Quick search returns IDs, then fetch full details as needed
+- **Contact Management**: Create, update, and delete people and companies
+- **Notes & Reminders**: Attach context to your contacts
+- **Interaction Logging**: Track emails, meetings, and calls
 
-## Installation
+## Adding to Claude Code
 
-### Using mpak (Recommended)
+### From Registry (Published)
 
 ```bash
 # Configure your Folk API key
-mpak config set @nimblebraininc/folk FOLK_API_KEY=your_api_key_here
+mpak config set @nimblebraininc/folk api_key=your_api_key_here
 
-# Run the server
-mpak bundle run @nimblebraininc/folk
+# Add to Claude Code
+claude mcp add folk -- mpak run @nimblebraininc/folk
 ```
 
-### Manual Installation
+### Local Development
 
 ```bash
-# Clone the repository
+# Clone and enter the repo
 git clone https://github.com/NimbleBrainInc/mcp-folk.git
 cd mcp-folk
 
-# Install dependencies with uv
+# Install dependencies
 uv sync
 
-# Set your API key
-export FOLK_API_KEY=your_api_key_here
+# Build the bundle
+make pack
 
-# Run the server
-uv run python -m mcp_folk.server
+# Configure your API key
+mpak config set @nimblebraininc/folk api_key=your_api_key_here
+
+# Add to Claude Code (use absolute path)
+claude mcp add folk -- mpak run --local /path/to/mcp-folk/mcp-folk-0.1.0-darwin-arm64.mcpb
 ```
 
 ## Configuration
@@ -49,62 +49,103 @@ uv run python -m mcp_folk.server
 1. Log in to your Folk workspace
 2. Go to **Settings > API**
 3. Create a new API key
-4. Copy the key and configure it as shown above
-
-### Claude Desktop Configuration
-
-Add to your `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "folk": {
-      "command": "mpak",
-      "args": ["run", "@nimblebraininc/folk"]
-    }
-  }
-}
-```
+4. Copy the key and configure with `mpak config set`
 
 ## Available Tools
 
-### People
-- `list_people` - List people in the workspace
-- `get_person` - Get a specific person by ID
-- `create_person` - Create a new person
-- `update_person` - Update an existing person
-- `delete_person` - Delete a person
-- `search_people` - Search people by name
+### Search (Use First)
 
-### Companies
-- `list_companies` - List companies in the workspace
-- `get_company` - Get a specific company by ID
-- `create_company` - Create a new company
-- `update_company` - Update an existing company
-- `delete_company` - Delete a company
-- `search_companies` - Search companies by name
+| Tool | Purpose |
+|------|---------|
+| `find_person(name)` | Find people by name, returns `{found, matches: [{id, name, email}]}` |
+| `find_company(name)` | Find companies by name, returns `{found, matches: [{id, name, industry}]}` |
 
-### Notes
-- `list_notes` - List notes (optionally filtered by entity)
-- `get_note` - Get a specific note
-- `create_note` - Create a note on a person or company
-- `update_note` - Update an existing note
-- `delete_note` - Delete a note
+### Details (After Finding)
 
-### Reminders
-- `list_reminders` - List reminders
-- `get_reminder` - Get a specific reminder
-- `create_reminder` - Create a reminder
-- `update_reminder` - Update an existing reminder
-- `delete_reminder` - Delete a reminder
+| Tool | Purpose |
+|------|---------|
+| `get_person_details(person_id)` | Full person info including all fields |
+| `get_company_details(company_id)` | Full company info including all fields |
 
-### Other
-- `list_groups` - List workspace groups
-- `list_users` - List workspace users
-- `get_current_user` - Get the current authenticated user
-- `get_user` - Get a specific user by ID
-- `list_deals` - List deals in a group
-- `create_interaction` - Log an interaction with a person or company
+### Browse
+
+| Tool | Purpose |
+|------|---------|
+| `browse_people(page, per_page)` | Paginated list of all people |
+| `browse_companies(page, per_page)` | Paginated list of all companies |
+
+### Actions
+
+| Tool | Purpose |
+|------|---------|
+| `add_person(first_name, ...)` | Create new person |
+| `add_company(name, ...)` | Create new company |
+| `update_person(person_id, ...)` | Update person fields |
+| `update_company(company_id, ...)` | Update company fields |
+| `delete_person(person_id)` | Delete a person |
+| `delete_company(company_id)` | Delete a company |
+
+### Notes & Reminders
+
+| Tool | Purpose |
+|------|---------|
+| `add_note(person_id, content)` | Add note to person |
+| `get_notes(person_id)` | Get notes for person |
+| `set_reminder(person_id, reminder, when)` | Set a reminder |
+| `log_interaction(person_id, type, when)` | Log an interaction |
+
+### Utility
+
+| Tool | Purpose |
+|------|---------|
+| `whoami()` | Get current authenticated user |
+
+## Common Use Cases
+
+**Look up contacts**
+- "Is Sarah Chen in my CRM?"
+- "Find everyone at Acme Corp"
+- "What's John's email?"
+
+**Add contacts after meetings**
+- "Add Mike Johnson from today's meeting, he's a PM at Stripe"
+- "Create a contact for lisa@example.com"
+
+**Take notes**
+- "Add a note to Sarah: discussed Q2 roadmap, she's interested in enterprise plan"
+- "What are my notes on the Acme deal?"
+
+**Set follow-ups**
+- "Remind me to follow up with John next Tuesday"
+- "Set a reminder to check in with Sarah in 2 weeks"
+
+**Log interactions**
+- "Log that I had a call with Mike today"
+- "Record my meeting with the Acme team"
+
+**Browse contacts**
+- "Show me my recent contacts"
+- "List all companies in my CRM"
+
+## Example Flow
+
+```
+User: "I just had coffee with Alex Rivera, she's interested in our API. Remind me to send her docs next week."
+
+AI: find_person("Alex Rivera")
+→ {"found": true, "matches": [{"id": "abc123", "name": "Alex Rivera", "email": "alex@techco.io"}]}
+
+AI: add_note("abc123", "Had coffee - interested in API, wants to see docs")
+→ {"id": "note456", "added": true}
+
+AI: log_interaction("abc123", "meeting", "2024-01-15T10:00:00Z")
+→ {"id": "int789", "logged": true}
+
+AI: set_reminder("abc123", "Send API docs to Alex", "2024-01-22T09:00:00Z")
+→ {"id": "rem012", "set": true}
+
+AI: "Done! I've added a note about your coffee chat, logged the meeting, and set a reminder for next Monday to send her the API docs."
+```
 
 ## Development
 
@@ -116,16 +157,19 @@ uv sync --dev
 uv run pytest tests/ -v
 
 # Format code
-uv run ruff format src/ tests/
+uv run ruff format .
 
 # Lint
-uv run ruff check src/ tests/
+uv run ruff check .
 
 # Type check
 uv run mypy src/
 
 # Run all checks
 make check
+
+# Build bundle for testing
+make pack
 ```
 
 ## API Reference

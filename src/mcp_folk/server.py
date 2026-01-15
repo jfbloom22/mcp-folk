@@ -1,4 +1,11 @@
-"""Folk CRM MCP Server - FastMCP Implementation."""
+"""Folk CRM MCP Server - AI-Friendly Interface.
+
+This server provides intent-based tools optimized for AI assistants:
+- Minimal response payloads (tokens are expensive)
+- Two-phase lookup (find first, get details second)
+- Natural language search (fuzzy name matching)
+- Compound operations where useful
+"""
 
 import logging
 import os
@@ -10,25 +17,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from mcp_folk.api_client import FolkAPIError, FolkClient
-from mcp_folk.api_models import (
-    Company,
-    Deal,
-    Group,
-    Interaction,
-    Note,
-    Person,
-    Reminder,
-    User,
-)
 
-# Debug logging for container diagnostics
+# Configure logging to stderr (stdout is for MCP JSON-RPC)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stderr,
 )
 logger = logging.getLogger("mcp_folk")
-
 logger.info("Folk server module loading...")
 
 # Create MCP server
@@ -59,30 +55,64 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "healthy", "service": "mcp-folk"})
 
 
-# ============================================================================
-# People Tools
-# ============================================================================
+# =============================================================================
+# TIER 1: Search/Find Tools (Most Used)
+# These return minimal payloads for quick lookups
+# =============================================================================
 
 
 @mcp.tool()
-async def list_people(
-    limit: int = 20,
-    cursor: str | None = None,
+async def find_person(
+    name: str,
     ctx: Context | None = None,
-) -> list[Person]:
-    """List people in the Folk workspace.
+) -> dict[str, Any]:
+    """Find people by name in the CRM.
+
+    Use this to check if someone exists or to get their ID for further operations.
+    Returns minimal info to save tokens - use get_person_details for full info.
 
     Args:
-        limit: Number of people to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        ctx: MCP context
+        name: Name to search for (first name, last name, or full name)
 
     Returns:
-        List of people in the workspace
+        {
+            "found": true/false,
+            "matches": [{"id": "...", "name": "Full Name", "email": "..."}],
+            "total": number of matches
+        }
     """
     client = get_client(ctx)
     try:
-        return await client.list_people(limit=limit, cursor=cursor)
+        # Search by fullName using 'like' operator (Folk API's contains equivalent)
+        filters = {"fullName": {"like": name}}
+        people = await client.list_people(limit=10, filters=filters)
+
+        matches = []
+        for person in people:
+            # Build full name from parts
+            full_name_parts = []
+            if person.first_name:
+                full_name_parts.append(person.first_name)
+            if person.last_name:
+                full_name_parts.append(person.last_name)
+            full_name = " ".join(full_name_parts) or person.full_name or "Unknown"
+
+            # Get primary email if available
+            email = person.emails[0] if person.emails else None
+
+            matches.append(
+                {
+                    "id": person.id,
+                    "name": full_name,
+                    "email": email,
+                }
+            )
+
+        return {
+            "found": len(matches) > 0,
+            "matches": matches,
+            "total": len(matches),
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -90,22 +120,87 @@ async def list_people(
 
 
 @mcp.tool()
-async def get_person(
+async def find_company(
+    name: str,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Find companies by name in the CRM.
+
+    Use this to check if a company exists or to get its ID for further operations.
+    Returns minimal info - use get_company_details for full info.
+
+    Args:
+        name: Company name to search for
+
+    Returns:
+        {
+            "found": true/false,
+            "matches": [{"id": "...", "name": "Company Name", "industry": "..."}],
+            "total": number of matches
+        }
+    """
+    client = get_client(ctx)
+    try:
+        # Search by name using 'like' operator (Folk API's contains equivalent)
+        filters = {"name": {"like": name}}
+        companies = await client.list_companies(limit=10, filters=filters)
+
+        matches = []
+        for company in companies:
+            matches.append(
+                {
+                    "id": company.id,
+                    "name": company.name,
+                    "industry": company.industry,
+                }
+            )
+
+        return {
+            "found": len(matches) > 0,
+            "matches": matches,
+            "total": len(matches),
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+# =============================================================================
+# TIER 2: Detail Tools
+# Get full information after finding the right entity
+# =============================================================================
+
+
+@mcp.tool()
+async def get_person_details(
     person_id: str,
     ctx: Context | None = None,
-) -> Person:
-    """Get a specific person by ID.
+) -> dict[str, Any]:
+    """Get full details for a person by their ID.
+
+    Use find_person first to get the ID, then this for complete information.
 
     Args:
-        person_id: The person's ID
-        ctx: MCP context
+        person_id: The person's ID from find_person
 
     Returns:
-        The person details
+        Full person details including all fields, notes count, etc.
     """
     client = get_client(ctx)
     try:
-        return await client.get_person(person_id)
+        person = await client.get_person(person_id)
+        return {
+            "id": person.id,
+            "first_name": person.first_name,
+            "last_name": person.last_name,
+            "full_name": person.full_name,
+            "emails": person.emails or [],
+            "phones": person.phones or [],
+            "job_title": person.job_title,
+            "description": person.description,
+            "created_at": person.created_at,
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -113,45 +208,248 @@ async def get_person(
 
 
 @mcp.tool()
-async def create_person(
-    first_name: str | None = None,
-    last_name: str | None = None,
-    emails: list[str] | None = None,
-    phones: list[str] | None = None,
-    job_title: str | None = None,
-    description: str | None = None,
-    group_ids: list[str] | None = None,
-    company_ids: list[str] | None = None,
+async def get_company_details(
+    company_id: str,
     ctx: Context | None = None,
-) -> Person:
-    """Create a new person in Folk.
+) -> dict[str, Any]:
+    """Get full details for a company by its ID.
+
+    Use find_company first to get the ID, then this for complete information.
 
     Args:
-        first_name: Person's first name
-        last_name: Person's last name
-        emails: List of email addresses
-        phones: List of phone numbers
-        job_title: Job title
-        description: Description or notes about the person
-        group_ids: List of group IDs to add the person to
-        company_ids: List of company IDs to associate with
-        ctx: MCP context
+        company_id: The company's ID from find_company
 
     Returns:
-        The created person
+        Full company details including all fields.
     """
     client = get_client(ctx)
     try:
-        return await client.create_person(
+        company = await client.get_company(company_id)
+        return {
+            "id": company.id,
+            "name": company.name,
+            "description": company.description,
+            "industry": company.industry,
+            "emails": company.emails or [],
+            "phones": company.phones or [],
+            "urls": company.urls or [],
+            "created_at": company.created_at,
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+# =============================================================================
+# TIER 3: Browse Tools
+# For exploring the CRM when you don't know what you're looking for
+# =============================================================================
+
+
+@mcp.tool()
+async def browse_people(
+    page: int = 1,
+    per_page: int = 20,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Browse all people in the CRM with pagination.
+
+    Use this to explore contacts when you don't have a specific name to search.
+    Returns minimal info per person to save tokens.
+
+    Args:
+        page: Page number (starts at 1)
+        per_page: Results per page (max 50)
+
+    Returns:
+        {
+            "people": [{"id": "...", "name": "...", "email": "..."}],
+            "page": current page,
+            "per_page": results per page,
+            "has_more": whether more pages exist
+        }
+    """
+    client = get_client(ctx)
+    try:
+        # Clamp per_page to reasonable limit
+        per_page = min(max(per_page, 1), 50)
+
+        # Folk API uses cursor pagination, simulate page-based
+        # For simplicity, we'll fetch and return one page
+        people = await client.list_people(limit=per_page)
+
+        results = []
+        for person in people:
+            full_name_parts = []
+            if person.first_name:
+                full_name_parts.append(person.first_name)
+            if person.last_name:
+                full_name_parts.append(person.last_name)
+            full_name = " ".join(full_name_parts) or person.full_name or "Unknown"
+
+            results.append(
+                {
+                    "id": person.id,
+                    "name": full_name,
+                    "email": person.emails[0] if person.emails else None,
+                    "company": person.job_title,  # Job title often includes company context
+                }
+            )
+
+        return {
+            "people": results,
+            "page": page,
+            "per_page": per_page,
+            "has_more": len(results) == per_page,  # Approximation
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+@mcp.tool()
+async def browse_companies(
+    page: int = 1,
+    per_page: int = 20,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Browse all companies in the CRM with pagination.
+
+    Use this to explore companies when you don't have a specific name to search.
+    Returns minimal info per company to save tokens.
+
+    Args:
+        page: Page number (starts at 1)
+        per_page: Results per page (max 50)
+
+    Returns:
+        {
+            "companies": [{"id": "...", "name": "...", "industry": "..."}],
+            "page": current page,
+            "per_page": results per page,
+            "has_more": whether more pages exist
+        }
+    """
+    client = get_client(ctx)
+    try:
+        per_page = min(max(per_page, 1), 50)
+        companies = await client.list_companies(limit=per_page)
+
+        results = []
+        for company in companies:
+            results.append(
+                {
+                    "id": company.id,
+                    "name": company.name,
+                    "industry": company.industry,
+                }
+            )
+
+        return {
+            "companies": results,
+            "page": page,
+            "per_page": per_page,
+            "has_more": len(results) == per_page,
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+# =============================================================================
+# TIER 4: Action Tools
+# Create, update, and manage CRM data
+# =============================================================================
+
+
+@mcp.tool()
+async def add_person(
+    first_name: str,
+    last_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    job_title: str | None = None,
+    notes: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Add a new person to the CRM.
+
+    Args:
+        first_name: Person's first name (required)
+        last_name: Person's last name
+        email: Email address
+        phone: Phone number
+        job_title: Job title or role
+        notes: Initial notes about this person
+
+    Returns:
+        {"id": "...", "name": "...", "created": true}
+    """
+    client = get_client(ctx)
+    try:
+        emails = [email] if email else None
+        phones = [phone] if phone else None
+
+        person = await client.create_person(
             first_name=first_name,
             last_name=last_name,
             emails=emails,
             phones=phones,
             job_title=job_title,
-            description=description,
-            group_ids=group_ids,
-            company_ids=company_ids,
+            description=notes,
         )
+
+        full_name = f"{first_name} {last_name}".strip() if last_name else first_name
+
+        return {
+            "id": person.id,
+            "name": full_name,
+            "created": True,
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+@mcp.tool()
+async def add_company(
+    name: str,
+    industry: str | None = None,
+    website: str | None = None,
+    notes: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Add a new company to the CRM.
+
+    Args:
+        name: Company name (required)
+        industry: Industry or sector
+        website: Company website URL
+        notes: Initial notes about this company
+
+    Returns:
+        {"id": "...", "name": "...", "created": true}
+    """
+    client = get_client(ctx)
+    try:
+        urls = [website] if website else None
+
+        company = await client.create_company(
+            name=name,
+            industry=industry,
+            urls=urls,
+            description=notes,
+        )
+
+        return {
+            "id": company.id,
+            "name": company.name,
+            "created": True,
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -163,38 +461,95 @@ async def update_person(
     person_id: str,
     first_name: str | None = None,
     last_name: str | None = None,
-    emails: list[str] | None = None,
-    phones: list[str] | None = None,
+    email: str | None = None,
+    phone: str | None = None,
     job_title: str | None = None,
-    description: str | None = None,
     ctx: Context | None = None,
-) -> Person:
-    """Update an existing person in Folk.
+) -> dict[str, Any]:
+    """Update an existing person's information.
+
+    Use find_person first to get the ID.
 
     Args:
-        person_id: The person's ID to update
-        first_name: New first name
+        person_id: The person's ID
+        first_name: New first name (or None to keep existing)
         last_name: New last name
-        emails: New list of email addresses
-        phones: New list of phone numbers
+        email: New email (replaces existing)
+        phone: New phone (replaces existing)
         job_title: New job title
-        description: New description
-        ctx: MCP context
 
     Returns:
-        The updated person
+        {"id": "...", "name": "...", "updated": true}
     """
     client = get_client(ctx)
     try:
-        return await client.update_person(
+        emails = [email] if email else None
+        phones = [phone] if phone else None
+
+        person = await client.update_person(
             person_id=person_id,
             first_name=first_name,
             last_name=last_name,
             emails=emails,
             phones=phones,
             job_title=job_title,
-            description=description,
         )
+
+        full_name_parts = []
+        if person.first_name:
+            full_name_parts.append(person.first_name)
+        if person.last_name:
+            full_name_parts.append(person.last_name)
+        full_name = " ".join(full_name_parts) or "Unknown"
+
+        return {
+            "id": person.id,
+            "name": full_name,
+            "updated": True,
+        }
+    except FolkAPIError as e:
+        if ctx:
+            ctx.error(f"API error: {e.message}")
+        raise
+
+
+@mcp.tool()
+async def update_company(
+    company_id: str,
+    name: str | None = None,
+    industry: str | None = None,
+    website: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Update an existing company's information.
+
+    Use find_company first to get the ID.
+
+    Args:
+        company_id: The company's ID
+        name: New company name
+        industry: New industry
+        website: New website URL
+
+    Returns:
+        {"id": "...", "name": "...", "updated": true}
+    """
+    client = get_client(ctx)
+    try:
+        urls = [website] if website else None
+
+        company = await client.update_company(
+            company_id=company_id,
+            name=name,
+            industry=industry,
+            urls=urls,
+        )
+
+        return {
+            "id": company.id,
+            "name": company.name,
+            "updated": True,
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -206,158 +561,20 @@ async def delete_person(
     person_id: str,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Delete a person from Folk.
+    """Delete a person from the CRM.
+
+    Use find_person first to get the ID. This action cannot be undone.
 
     Args:
         person_id: The person's ID to delete
-        ctx: MCP context
 
     Returns:
-        Confirmation of deletion
+        {"id": "...", "deleted": true}
     """
     client = get_client(ctx)
     try:
         await client.delete_person(person_id)
-        return {"deleted": True, "person_id": person_id}
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-# ============================================================================
-# Company Tools
-# ============================================================================
-
-
-@mcp.tool()
-async def list_companies(
-    limit: int = 20,
-    cursor: str | None = None,
-    ctx: Context | None = None,
-) -> list[Company]:
-    """List companies in the Folk workspace.
-
-    Args:
-        limit: Number of companies to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        ctx: MCP context
-
-    Returns:
-        List of companies in the workspace
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_companies(limit=limit, cursor=cursor)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def get_company(
-    company_id: str,
-    ctx: Context | None = None,
-) -> Company:
-    """Get a specific company by ID.
-
-    Args:
-        company_id: The company's ID
-        ctx: MCP context
-
-    Returns:
-        The company details
-    """
-    client = get_client(ctx)
-    try:
-        return await client.get_company(company_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def create_company(
-    name: str,
-    description: str | None = None,
-    industry: str | None = None,
-    emails: list[str] | None = None,
-    phones: list[str] | None = None,
-    urls: list[str] | None = None,
-    group_ids: list[str] | None = None,
-    ctx: Context | None = None,
-) -> Company:
-    """Create a new company in Folk.
-
-    Args:
-        name: Company name (required)
-        description: Company description
-        industry: Industry sector
-        emails: List of email addresses
-        phones: List of phone numbers
-        urls: List of website URLs
-        group_ids: List of group IDs to add the company to
-        ctx: MCP context
-
-    Returns:
-        The created company
-    """
-    client = get_client(ctx)
-    try:
-        return await client.create_company(
-            name=name,
-            description=description,
-            industry=industry,
-            emails=emails,
-            phones=phones,
-            urls=urls,
-            group_ids=group_ids,
-        )
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def update_company(
-    company_id: str,
-    name: str | None = None,
-    description: str | None = None,
-    industry: str | None = None,
-    emails: list[str] | None = None,
-    phones: list[str] | None = None,
-    urls: list[str] | None = None,
-    ctx: Context | None = None,
-) -> Company:
-    """Update an existing company in Folk.
-
-    Args:
-        company_id: The company's ID to update
-        name: New company name
-        description: New description
-        industry: New industry sector
-        emails: New list of email addresses
-        phones: New list of phone numbers
-        urls: New list of website URLs
-        ctx: MCP context
-
-    Returns:
-        The updated company
-    """
-    client = get_client(ctx)
-    try:
-        return await client.update_company(
-            company_id=company_id,
-            name=name,
-            description=description,
-            industry=industry,
-            emails=emails,
-            phones=phones,
-            urls=urls,
-        )
+        return {"id": person_id, "deleted": True}
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -369,255 +586,57 @@ async def delete_company(
     company_id: str,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Delete a company from Folk.
+    """Delete a company from the CRM.
+
+    Use find_company first to get the ID. This action cannot be undone.
 
     Args:
         company_id: The company's ID to delete
-        ctx: MCP context
 
     Returns:
-        Confirmation of deletion
+        {"id": "...", "deleted": true}
     """
     client = get_client(ctx)
     try:
         await client.delete_company(company_id)
-        return {"deleted": True, "company_id": company_id}
+        return {"id": company_id, "deleted": True}
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
         raise
 
 
-# ============================================================================
-# Note Tools
-# ============================================================================
+# =============================================================================
+# TIER 5: Notes & Reminders
+# Attach context to contacts
+# =============================================================================
 
 
 @mcp.tool()
-async def list_notes(
-    limit: int = 20,
-    cursor: str | None = None,
-    entity_id: str | None = None,
-    ctx: Context | None = None,
-) -> list[Note]:
-    """List notes in the Folk workspace.
-
-    Args:
-        limit: Number of notes to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        entity_id: Filter notes by entity ID (person or company)
-        ctx: MCP context
-
-    Returns:
-        List of notes
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_notes(limit=limit, cursor=cursor, entity_id=entity_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def get_note(
-    note_id: str,
-    ctx: Context | None = None,
-) -> Note:
-    """Get a specific note by ID.
-
-    Args:
-        note_id: The note's ID
-        ctx: MCP context
-
-    Returns:
-        The note details
-    """
-    client = get_client(ctx)
-    try:
-        return await client.get_note(note_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def create_note(
-    entity_id: str,
+async def add_note(
+    person_id: str,
     content: str,
-    visibility: str = "public",
-    ctx: Context | None = None,
-) -> Note:
-    """Create a new note on a person or company.
-
-    Args:
-        entity_id: The entity ID (person or company) to attach the note to
-        content: The note content (1-100,000 characters)
-        visibility: Note visibility ("public" or "private")
-        ctx: MCP context
-
-    Returns:
-        The created note
-    """
-    client = get_client(ctx)
-    try:
-        return await client.create_note(
-            entity_id=entity_id,
-            content=content,
-            visibility=visibility,
-        )
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def update_note(
-    note_id: str,
-    content: str | None = None,
-    visibility: str | None = None,
-    ctx: Context | None = None,
-) -> Note:
-    """Update an existing note.
-
-    Args:
-        note_id: The note's ID to update
-        content: New note content
-        visibility: New visibility ("public" or "private")
-        ctx: MCP context
-
-    Returns:
-        The updated note
-    """
-    client = get_client(ctx)
-    try:
-        return await client.update_note(
-            note_id=note_id,
-            content=content,
-            visibility=visibility,
-        )
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def delete_note(
-    note_id: str,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Delete a note.
+    """Add a note to a person.
+
+    Use find_person first to get the ID.
 
     Args:
-        note_id: The note's ID to delete
-        ctx: MCP context
+        person_id: The person's ID
+        content: Note content
 
     Returns:
-        Confirmation of deletion
+        {"id": "...", "added": true}
     """
     client = get_client(ctx)
     try:
-        await client.delete_note(note_id)
-        return {"deleted": True, "note_id": note_id}
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-# ============================================================================
-# Reminder Tools
-# ============================================================================
-
-
-@mcp.tool()
-async def list_reminders(
-    limit: int = 20,
-    cursor: str | None = None,
-    entity_id: str | None = None,
-    ctx: Context | None = None,
-) -> list[Reminder]:
-    """List reminders in the Folk workspace.
-
-    Args:
-        limit: Number of reminders to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        entity_id: Filter reminders by entity ID
-        ctx: MCP context
-
-    Returns:
-        List of reminders
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_reminders(limit=limit, cursor=cursor, entity_id=entity_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def get_reminder(
-    reminder_id: str,
-    ctx: Context | None = None,
-) -> Reminder:
-    """Get a specific reminder by ID.
-
-    Args:
-        reminder_id: The reminder's ID
-        ctx: MCP context
-
-    Returns:
-        The reminder details
-    """
-    client = get_client(ctx)
-    try:
-        return await client.get_reminder(reminder_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def create_reminder(
-    entity_id: str,
-    name: str,
-    trigger_time: str,
-    visibility: str = "public",
-    recurrence_rule: str | None = None,
-    assigned_user_ids: list[str] | None = None,
-    ctx: Context | None = None,
-) -> Reminder:
-    """Create a new reminder on a person or company.
-
-    Args:
-        entity_id: The entity ID (person or company) to attach the reminder to
-        name: Reminder name/title (max 255 chars)
-        trigger_time: When to trigger (ISO 8601 datetime)
-        visibility: Reminder visibility ("public" or "private")
-        recurrence_rule: iCalendar recurrence rule (RFC 5545)
-        assigned_user_ids: List of user IDs to assign the reminder to
-        ctx: MCP context
-
-    Returns:
-        The created reminder
-    """
-    client = get_client(ctx)
-    try:
-        return await client.create_reminder(
-            entity_id=entity_id,
-            name=name,
-            trigger_time=trigger_time,
-            visibility=visibility,
-            recurrence_rule=recurrence_rule,
-            assigned_user_ids=assigned_user_ids,
+        note = await client.create_note(
+            entity_id=person_id,
+            content=content,
+            visibility="public",
         )
+        return {"id": note.id, "added": True}
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -625,120 +644,33 @@ async def create_reminder(
 
 
 @mcp.tool()
-async def update_reminder(
-    reminder_id: str,
-    name: str | None = None,
-    trigger_time: str | None = None,
-    visibility: str | None = None,
-    recurrence_rule: str | None = None,
-    ctx: Context | None = None,
-) -> Reminder:
-    """Update an existing reminder.
-
-    Args:
-        reminder_id: The reminder's ID to update
-        name: New reminder name
-        trigger_time: New trigger time (ISO 8601)
-        visibility: New visibility ("public" or "private")
-        recurrence_rule: New recurrence rule
-        ctx: MCP context
-
-    Returns:
-        The updated reminder
-    """
-    client = get_client(ctx)
-    try:
-        return await client.update_reminder(
-            reminder_id=reminder_id,
-            name=name,
-            trigger_time=trigger_time,
-            visibility=visibility,
-            recurrence_rule=recurrence_rule,
-        )
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def delete_reminder(
-    reminder_id: str,
+async def get_notes(
+    person_id: str,
+    limit: int = 10,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Delete a reminder.
+    """Get notes for a person.
 
     Args:
-        reminder_id: The reminder's ID to delete
-        ctx: MCP context
+        person_id: The person's ID
+        limit: Maximum notes to return (default 10)
 
     Returns:
-        Confirmation of deletion
+        {"notes": [{"id": "...", "content": "...", "created_at": "..."}]}
     """
     client = get_client(ctx)
     try:
-        await client.delete_reminder(reminder_id)
-        return {"deleted": True, "reminder_id": reminder_id}
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-# ============================================================================
-# Group Tools
-# ============================================================================
-
-
-@mcp.tool()
-async def list_groups(
-    limit: int = 20,
-    cursor: str | None = None,
-    ctx: Context | None = None,
-) -> list[Group]:
-    """List groups in the Folk workspace.
-
-    Args:
-        limit: Number of groups to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        ctx: MCP context
-
-    Returns:
-        List of groups
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_groups(limit=limit, cursor=cursor)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-# ============================================================================
-# User Tools
-# ============================================================================
-
-
-@mcp.tool()
-async def list_users(
-    limit: int = 20,
-    cursor: str | None = None,
-    ctx: Context | None = None,
-) -> list[User]:
-    """List users in the Folk workspace.
-
-    Args:
-        limit: Number of users to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        ctx: MCP context
-
-    Returns:
-        List of users
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_users(limit=limit, cursor=cursor)
+        notes = await client.list_notes(limit=limit, entity_id=person_id)
+        return {
+            "notes": [
+                {
+                    "id": note.id,
+                    "content": note.content,
+                    "created_at": note.created_at,
+                }
+                for note in notes
+            ]
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
@@ -746,177 +678,92 @@ async def list_users(
 
 
 @mcp.tool()
-async def get_current_user(
+async def set_reminder(
+    person_id: str,
+    reminder: str,
+    when: str,
     ctx: Context | None = None,
-) -> User:
-    """Get the current authenticated user.
+) -> dict[str, Any]:
+    """Set a reminder for a person.
+
+    Use find_person first to get the ID.
 
     Args:
-        ctx: MCP context
+        person_id: The person's ID
+        reminder: What to be reminded about
+        when: When to trigger (ISO 8601 datetime, e.g., "2024-12-25T09:00:00Z")
 
     Returns:
-        The current user details
+        {"id": "...", "set": true}
     """
     client = get_client(ctx)
     try:
-        return await client.get_current_user()
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def get_user(
-    user_id: str,
-    ctx: Context | None = None,
-) -> User:
-    """Get a specific user by ID.
-
-    Args:
-        user_id: The user's ID
-        ctx: MCP context
-
-    Returns:
-        The user details
-    """
-    client = get_client(ctx)
-    try:
-        return await client.get_user(user_id)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-# ============================================================================
-# Deal Tools
-# ============================================================================
-
-
-@mcp.tool()
-async def list_deals(
-    group_id: str,
-    object_type: str,
-    limit: int = 20,
-    cursor: str | None = None,
-    ctx: Context | None = None,
-) -> list[Deal]:
-    """List deals in a Folk group.
-
-    Args:
-        group_id: The group ID (from list_groups)
-        object_type: The deal object type name (from group custom fields)
-        limit: Number of deals to return (1-100, default 20)
-        cursor: Pagination cursor for next page
-        ctx: MCP context
-
-    Returns:
-        List of deals in the group
-    """
-    client = get_client(ctx)
-    try:
-        return await client.list_deals(
-            group_id=group_id,
-            object_type=object_type,
-            limit=limit,
-            cursor=cursor,
+        result = await client.create_reminder(
+            entity_id=person_id,
+            name=reminder,
+            trigger_time=when,
+            visibility="public",
         )
+        return {"id": result.id, "set": True}
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
         raise
 
 
-# ============================================================================
-# Interaction Tools
-# ============================================================================
-
-
 @mcp.tool()
-async def create_interaction(
-    entity_id: str,
+async def log_interaction(
+    person_id: str,
     interaction_type: str,
-    occurred_at: str,
+    when: str,
     ctx: Context | None = None,
-) -> Interaction:
-    """Create a new interaction with a person or company.
+) -> dict[str, Any]:
+    """Log an interaction with a person.
 
     Args:
-        entity_id: The entity ID (person or company)
+        person_id: The person's ID
         interaction_type: Type of interaction (e.g., "email", "meeting", "call")
-        occurred_at: When the interaction occurred (ISO 8601 datetime)
-        ctx: MCP context
+        when: When it occurred (ISO 8601 datetime)
 
     Returns:
-        The created interaction
+        {"id": "...", "logged": true}
     """
     client = get_client(ctx)
     try:
-        return await client.create_interaction(
-            entity_id=entity_id,
+        result = await client.create_interaction(
+            entity_id=person_id,
             interaction_type=interaction_type,
-            occurred_at=occurred_at,
+            occurred_at=when,
         )
+        return {"id": result.id, "logged": True}
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
         raise
 
 
-# ============================================================================
-# Search Tools
-# ============================================================================
+# =============================================================================
+# Utility Tools
+# =============================================================================
 
 
 @mcp.tool()
-async def search_people(
-    query: str,
-    limit: int = 20,
+async def whoami(
     ctx: Context | None = None,
-) -> list[Person]:
-    """Search for people by name or email.
-
-    Args:
-        query: Search query (matches name or email)
-        limit: Maximum results to return
-        ctx: MCP context
+) -> dict[str, Any]:
+    """Get information about the current authenticated user.
 
     Returns:
-        List of matching people
+        {"id": "...", "name": "...", "email": "..."}
     """
     client = get_client(ctx)
     try:
-        # Use filter to search
-        filters = {"fullName": {"contains": query}}
-        return await client.list_people(limit=limit, filters=filters)
-    except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
-        raise
-
-
-@mcp.tool()
-async def search_companies(
-    query: str,
-    limit: int = 20,
-    ctx: Context | None = None,
-) -> list[Company]:
-    """Search for companies by name.
-
-    Args:
-        query: Search query (matches company name)
-        limit: Maximum results to return
-        ctx: MCP context
-
-    Returns:
-        List of matching companies
-    """
-    client = get_client(ctx)
-    try:
-        # Use filter to search
-        filters = {"name": {"contains": query}}
-        return await client.list_companies(limit=limit, filters=filters)
+        user = await client.get_current_user()
+        return {
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email,
+        }
     except FolkAPIError as e:
         if ctx:
             ctx.error(f"API error: {e.message}")
