@@ -510,8 +510,8 @@ class FolkClient:
         # Folk API requires iCalendar format with TZID (not Z suffix)
         # Format: DTSTART;TZID=UTC:20260115T090000
         dtstart = dt_utc.strftime("%Y%m%dT%H%M%S")
-        # One-time reminder uses COUNT=1 without FREQ
-        recurrence_rule = f"DTSTART;TZID=UTC:{dtstart}\nRRULE:COUNT=1"
+        # One-time reminder: RRULE requires FREQ, use FREQ=DAILY;COUNT=1 for single occurrence
+        recurrence_rule = f"DTSTART;TZID=UTC:{dtstart}\nRRULE:FREQ=DAILY;COUNT=1"
 
         body: dict[str, Any] = {
             "entity": {"id": entity_id},

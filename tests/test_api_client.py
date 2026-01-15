@@ -111,7 +111,7 @@ class TestCreateReminderIntegration:
             assert body["name"] == "Test reminder"
             assert body["visibility"] == "private"
             assert "DTSTART;TZID=UTC:" in body["recurrenceRule"]
-            assert "\nRRULE:COUNT=1" in body["recurrenceRule"]
+            assert "\nRRULE:FREQ=DAILY;COUNT=1" in body["recurrenceRule"]
             # Private reminders don't need assignedUsers
             assert "assignedUsers" not in body
 
