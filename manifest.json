@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.3",
+  "name": "@nimblebraininc/folk",
+  "version": "0.1.0",
+  "description": "Folk CRM server for managing people, companies, notes, and reminders",
+  "author": {
+    "name": "NimbleBrain Inc"
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "Folk API Key",
+      "description": "Your Folk API key from workspace settings (Settings > API)",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "server": {
+    "type": "python",
+    "entry_point": "mcp_folk.server",
+    "mcp_config": {
+      "command": "python",
+      "args": ["-m", "mcp_folk.server"],
+      "env": {
+        "FOLK_API_KEY": "${user_config.api_key}"
+      }
+    }
+  }
+}
