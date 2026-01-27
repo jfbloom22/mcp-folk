@@ -1,5 +1,8 @@
 # Folk CRM MCP Server
 
+[![CI](https://github.com/NimbleBrainInc/mcp-folk/actions/workflows/ci.yml/badge.svg)](https://github.com/NimbleBrainInc/mcp-folk/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 An MCP (Model Context Protocol) server that provides access to [Folk CRM](https://folk.app) functionality, allowing AI assistants to manage contacts, companies, notes, reminders, and more.
 
 ## Features
