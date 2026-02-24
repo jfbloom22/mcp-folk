@@ -64,7 +64,7 @@ bundle: ## Build MCPB bundle locally
 
 bundle-run: bundle ## Build and run MCPB bundle locally
 	@echo "Starting bundle with mcpb-python base image..."
-	@python -m http.server 9999 --directory . &
+	@python -m http.server 9999 --bind 127.0.0.1 --directory . &
 	@sleep 1
 	docker run --rm \
 		--add-host host.docker.internal:host-gateway \

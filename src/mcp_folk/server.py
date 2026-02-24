@@ -11,12 +11,15 @@ import logging
 import os
 import re
 import sys
+import time
+from collections import deque
 from importlib.resources import files
 from typing import Any
 
 from fastmcp import Context, FastMCP
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from mcp_folk.api_client import FolkAPIError, FolkClient
 
@@ -24,6 +27,71 @@ from mcp_folk.api_client import FolkAPIError, FolkClient
 _FOLK_ID_RE = re.compile(
     r"^[a-z]{2,4}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read boolean env vars consistently."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _report_api_error(ctx: Context | None, e: FolkAPIError) -> None:
+    """Report safe error context without leaking API payload details."""
+    if ctx:
+        ctx.error(f"Folk API request failed (status={e.status})")
+
+
+class HTTPAuthAndRateLimitMiddleware(BaseHTTPMiddleware):
+    """Protect HTTP transport with bearer auth and simple per-client rate limiting."""
+
+    def __init__(self, app: Any) -> None:
+        super().__init__(app)
+        self.require_auth = _env_bool("MCP_HTTP_REQUIRE_AUTH", True)
+        self.auth_token = os.environ.get("MCP_HTTP_AUTH_TOKEN")
+        self.rate_limit = max(1, int(os.environ.get("MCP_HTTP_RATE_LIMIT_PER_MIN", "120")))
+        self._requests: dict[str, deque[float]] = {}
+
+        if self.require_auth and not self.auth_token:
+            logger.warning(
+                "HTTP auth is enabled but MCP_HTTP_AUTH_TOKEN is not set. "
+                "All HTTP requests (except /health) will be rejected."
+            )
+
+    def _is_authorized(self, request: Request) -> bool:
+        if request.url.path == "/health":
+            return True
+        if not self.require_auth:
+            return True
+        if not self.auth_token:
+            return False
+
+        header = request.headers.get("authorization", "")
+        expected = f"Bearer {self.auth_token}"
+        return header == expected
+
+    def _is_rate_limited(self, request: Request) -> bool:
+        if request.url.path == "/health":
+            return False
+
+        now = time.monotonic()
+        key = request.client.host if request.client else "unknown"
+        window = self._requests.setdefault(key, deque())
+        cutoff = now - 60
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= self.rate_limit:
+            return True
+        window.append(now)
+        return False
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        if not self._is_authorized(request):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        if self._is_rate_limited(request):
+            return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
+        return await call_next(request)
 
 
 def _validate_folk_id(value: str, entity: str = "entity") -> None:
@@ -151,8 +219,7 @@ async def find_person(
             "total": len(matches),
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -198,8 +265,7 @@ async def find_company(
             "total": len(matches),
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -241,8 +307,7 @@ async def get_person_details(
             "created_at": person.created_at,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -277,8 +342,7 @@ async def get_company_details(
             "created_at": company.created_at,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -345,8 +409,7 @@ async def browse_people(
             "has_more": len(results) == per_page,  # Approximation
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -395,8 +458,7 @@ async def browse_companies(
             "has_more": len(results) == per_page,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -430,8 +492,7 @@ async def list_groups(
             "total": len(groups),
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -543,8 +604,7 @@ async def find_people_in_group(
             "group_name": group.name,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -642,8 +702,7 @@ async def find_companies_in_group(
             "group_name": group.name,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -698,8 +757,7 @@ async def add_person(
             "created": True,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -739,8 +797,7 @@ async def add_company(
             "created": True,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -798,8 +855,7 @@ async def update_person(
             "updated": True,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -843,8 +899,7 @@ async def update_company(
             "updated": True,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -870,8 +925,7 @@ async def delete_person(
         await client.delete_person(person_id)
         return {"id": person_id, "deleted": True}
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -897,8 +951,7 @@ async def delete_company(
         await client.delete_company(company_id)
         return {"id": company_id, "deleted": True}
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -936,8 +989,7 @@ async def add_note(
         )
         return {"id": note.id, "added": True}
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -959,6 +1011,7 @@ async def get_notes(
         {"notes": [{"id": "...", "content": "...", "created_at": "..."}]}
     """
     _validate_folk_id(person_id, "person")
+    limit = min(max(limit, 1), 50)
     client = get_client(ctx)
     try:
         notes = await client.list_notes(limit=limit, entity_id=person_id)
@@ -973,8 +1026,7 @@ async def get_notes(
             ]
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -1009,8 +1061,7 @@ async def set_reminder(
         )
         return {"id": result.id, "set": True}
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -1044,8 +1095,7 @@ async def log_interaction(
         )
         return {"id": result.id, "logged": True}
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
@@ -1072,13 +1122,13 @@ async def whoami(
             "email": user.email,
         }
     except FolkAPIError as e:
-        if ctx:
-            ctx.error(f"API error: {e.message}")
+        _report_api_error(ctx, e)
         raise
 
 
 # Create ASGI application for HTTP deployment
 app = mcp.http_app()
+app.add_middleware(HTTPAuthAndRateLimitMiddleware)
 
 # Stdio entrypoint for Claude Desktop / mpak
 if __name__ == "__main__":

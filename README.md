@@ -55,6 +55,14 @@ claude mcp add folk -- mpak run --local /path/to/mcp-folk/mcp-folk-0.1.0-darwin-
 3. Create a new API key
 4. Copy the key and configure with `mpak config set`
 
+### HTTP Transport Security
+
+When deploying over HTTP (not stdio), configure:
+
+- `MCP_HTTP_REQUIRE_AUTH` (default: `true`): Require bearer auth for all routes except `/health`
+- `MCP_HTTP_AUTH_TOKEN`: Shared bearer token value for HTTP requests (`Authorization: Bearer <token>`)
+- `MCP_HTTP_RATE_LIMIT_PER_MIN` (default: `120`): Per-client request limit per rolling minute
+
 ## Available Tools
 
 ### Search (Use First)
