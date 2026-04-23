@@ -59,9 +59,10 @@ claude mcp add folk -- mpak run --local /path/to/mcp-folk/mcp-folk-0.1.0-darwin-
 
 When deploying over HTTP (not stdio), configure:
 
-- `MCP_HTTP_REQUIRE_AUTH` (default: `true`): Require bearer auth for all routes except `/health`
-- `MCP_HTTP_AUTH_TOKEN`: Shared bearer token value for HTTP requests (`Authorization: Bearer <token>`)
-- `MCP_HTTP_RATE_LIMIT_PER_MIN` (default: `120`): Per-client request limit per rolling minute
+- `Authorization: Bearer <folk_api_token>` on every request (except `/health`)
+- `MCP_HTTP_RATE_LIMIT_PER_MIN` (default: `120`): Per-minute limit per `IP + token`
+- `MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN` (default: `40`): Per-minute limit for requests missing/invalid auth by IP
+- `MCP_HTTP_MAX_BODY_BYTES` (default: `1048576`): Reject requests larger than this via `413`
 
 ## Available Tools
 

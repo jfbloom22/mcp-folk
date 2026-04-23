@@ -13,6 +13,8 @@ import re
 import sys
 import time
 from collections import deque
+from contextvars import ContextVar
+from hashlib import sha256
 from importlib.resources import files
 from typing import Any
 
@@ -29,69 +31,84 @@ _FOLK_ID_RE = re.compile(
 )
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    """Read boolean env vars consistently."""
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _report_api_error(ctx: Context | None, e: FolkAPIError) -> None:
     """Report safe error context without leaking API payload details."""
     if ctx:
         ctx.error(f"Folk API request failed (status={e.status})")
 
 
-class HTTPAuthAndRateLimitMiddleware(BaseHTTPMiddleware):
-    """Protect HTTP transport with bearer auth and simple per-client rate limiting."""
+_REQUEST_FOLK_TOKEN: ContextVar[str | None] = ContextVar("request_folk_token", default=None)
+
+
+def _get_request_folk_token() -> str | None:
+    """Get Folk token from current request context for stateless passthrough mode."""
+    return _REQUEST_FOLK_TOKEN.get()
+
+
+def _extract_bearer_token(header_value: str | None) -> str | None:
+    """Extract bearer token from Authorization header."""
+    if not header_value:
+        return None
+    parts = header_value.strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        return None
+    return parts[1].strip()
+
+
+class HTTPPassthroughAuthAndRateLimitMiddleware(BaseHTTPMiddleware):
+    """Stateless auth: require inbound Folk bearer token and forward it upstream."""
 
     def __init__(self, app: Any) -> None:
         super().__init__(app)
-        self.require_auth = _env_bool("MCP_HTTP_REQUIRE_AUTH", True)
-        self.auth_token = os.environ.get("MCP_HTTP_AUTH_TOKEN")
-        self.rate_limit = max(1, int(os.environ.get("MCP_HTTP_RATE_LIMIT_PER_MIN", "120")))
+        self.auth_rate_limit = max(1, int(os.environ.get("MCP_HTTP_RATE_LIMIT_PER_MIN", "120")))
+        self.no_auth_rate_limit = max(1, int(os.environ.get("MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN", "40")))
+        self.max_body_bytes = max(1, int(os.environ.get("MCP_HTTP_MAX_BODY_BYTES", "1048576")))
         self._requests: dict[str, deque[float]] = {}
 
-        if self.require_auth and not self.auth_token:
-            logger.warning(
-                "HTTP auth is enabled but MCP_HTTP_AUTH_TOKEN is not set. "
-                "All HTTP requests (except /health) will be rejected."
-            )
-
-    def _is_authorized(self, request: Request) -> bool:
-        if request.url.path == "/health":
-            return True
-        if not self.require_auth:
-            return True
-        if not self.auth_token:
-            return False
-
-        header = request.headers.get("authorization", "")
-        expected = f"Bearer {self.auth_token}"
-        return header == expected
-
-    def _is_rate_limited(self, request: Request) -> bool:
-        if request.url.path == "/health":
-            return False
-
+    def _is_rate_limited(self, key: str, limit: int) -> bool:
+        """Apply rolling per-minute limit for a given key."""
         now = time.monotonic()
-        key = request.client.host if request.client else "unknown"
         window = self._requests.setdefault(key, deque())
         cutoff = now - 60
         while window and window[0] < cutoff:
             window.popleft()
-        if len(window) >= self.rate_limit:
+        if len(window) >= limit:
             return True
         window.append(now)
         return False
 
+    def _has_oversized_body(self, request: Request) -> bool:
+        """Use Content-Length guard to reject oversized requests early."""
+        content_length = request.headers.get("content-length")
+        if not content_length:
+            return False
+        try:
+            return int(content_length) > self.max_body_bytes
+        except ValueError:
+            return True
+
     async def dispatch(self, request: Request, call_next: Any) -> Response:
-        if not self._is_authorized(request):
+        if request.url.path == "/health":
+            return await call_next(request)
+        if self._has_oversized_body(request):
+            return JSONResponse({"error": "Request too large"}, status_code=413)
+
+        client_ip = request.client.host if request.client else "unknown"
+        token = _extract_bearer_token(request.headers.get("authorization"))
+        if not token:
+            if self._is_rate_limited(f"noauth:{client_ip}", self.no_auth_rate_limit):
+                return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        if self._is_rate_limited(request):
+
+        token_hash = sha256(token.encode("utf-8")).hexdigest()[:16]
+        if self._is_rate_limited(f"auth:{client_ip}:{token_hash}", self.auth_rate_limit):
             return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
-        return await call_next(request)
+
+        token_ctx = _REQUEST_FOLK_TOKEN.set(token)
+        try:
+            return await call_next(request)
+        finally:
+            _REQUEST_FOLK_TOKEN.reset(token_ctx)
 
 
 def _validate_folk_id(value: str, entity: str = "entity") -> None:
@@ -143,13 +160,16 @@ def get_client(ctx: Context | None = None) -> FolkClient:
     """Get or create the API client instance."""
     global _client
     if _client is None:
-        api_key = os.environ.get("FOLK_API_KEY")
-        if not api_key:
-            msg = "FOLK_API_KEY environment variable is required"
-            if ctx:
-                ctx.error(msg)
-            raise ValueError(msg)
-        _client = FolkClient(api_key=api_key)
+        # Fallback key is only for stdio/local execution; HTTP mode is bearer passthrough.
+        _client = FolkClient(
+            api_key=os.environ.get("FOLK_API_KEY"),
+            token_provider=_get_request_folk_token,
+        )
+    if not _client.api_key and not _get_request_folk_token():
+        msg = "FOLK_API_KEY or inbound Authorization bearer token is required"
+        if ctx:
+            ctx.error(msg)
+        raise ValueError(msg)
     return _client
 
 
@@ -1128,7 +1148,7 @@ async def whoami(
 
 # Create ASGI application for HTTP deployment
 app = mcp.http_app()
-app.add_middleware(HTTPAuthAndRateLimitMiddleware)
+app.add_middleware(HTTPPassthroughAuthAndRateLimitMiddleware)
 
 # Stdio entrypoint for Claude Desktop / mpak
 if __name__ == "__main__":

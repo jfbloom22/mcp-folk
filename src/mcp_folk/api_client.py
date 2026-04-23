@@ -1,6 +1,7 @@
 """Async HTTP client for Folk API."""
 
 import os
+from collections.abc import Callable
 from datetime import UTC
 from typing import Any
 
@@ -51,10 +52,10 @@ class FolkClient:
         self,
         api_key: str | None = None,
         timeout: float = 30.0,
+        token_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("FOLK_API_KEY")
-        if not self.api_key:
-            raise ValueError("FOLK_API_KEY is required")
+        self.token_provider = token_provider
         self.timeout = timeout
         self._session: aiohttp.ClientSession | None = None
 
@@ -70,8 +71,6 @@ class FolkClient:
             headers = {
                 "User-Agent": "mcp-server-folk/0.1.0",
                 "Accept": "application/json",
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
             }
 
             self._session = aiohttp.ClientSession(
@@ -95,6 +94,9 @@ class FolkClient:
         await self._ensure_session()
 
         url = f"{self.BASE_URL}{path}"
+        auth_token = self.token_provider() if self.token_provider else self.api_key
+        if not auth_token:
+            raise ValueError("FOLK_API_KEY or inbound Authorization bearer token is required")
 
         # Clean up params (remove None values)
         if params:
@@ -105,45 +107,18 @@ class FolkClient:
                 raise RuntimeError("Session not initialized")
 
             kwargs: dict[str, Any] = {}
+            headers = {"Authorization": f"Bearer {auth_token}"}
             if json_data is not None:
                 kwargs["json"] = json_data
+                headers["Content-Type"] = "application/json"
             if params:
                 kwargs["params"] = params
-
-            # For DELETE requests without body, use a separate session request without
-            # Content-Type to avoid "Body cannot be empty when content-type is set" error
-            if method == "DELETE" and json_data is None:
-                # Create headers without Content-Type for DELETE
-                delete_headers = {
-                    "User-Agent": "mcp-server-folk/0.1.0",
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
-                }
-                async with aiohttp.ClientSession().request(
-                    method, url, headers=delete_headers, **kwargs
-                ) as response:
-                    # DELETE might return 204 No Content with empty body
-                    if response.status == 204:
-                        return {}
-                    result = await response.json()
-
-                    if response.status >= 400:
-                        error_msg = "Unknown error"
-                        if isinstance(result, dict):
-                            if "error" in result:
-                                error_obj = result["error"]
-                                if isinstance(error_obj, dict):
-                                    error_msg = error_obj.get("message", str(error_obj))
-                                else:
-                                    error_msg = str(error_obj)
-                            elif "message" in result:
-                                error_msg = result["message"]
-
-                        raise FolkAPIError(response.status, error_msg, result)
-
-                    return result  # type: ignore[no-any-return]
+            kwargs["headers"] = headers
 
             async with self._session.request(method, url, **kwargs) as response:
+                # DELETE often returns 204 with no response body
+                if response.status == 204:
+                    return {}
                 result = await response.json()
 
                 if response.status >= 400:
