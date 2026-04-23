@@ -94,7 +94,9 @@ class FolkClient:
         await self._ensure_session()
 
         url = f"{self.BASE_URL}{path}"
-        auth_token = self.token_provider() if self.token_provider else self.api_key
+        auth_token = self.token_provider() if self.token_provider else None
+        if not auth_token:
+            auth_token = self.api_key
         if not auth_token:
             raise ValueError("FOLK_API_KEY or inbound Authorization bearer token is required")
 
