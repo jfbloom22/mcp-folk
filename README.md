@@ -64,6 +64,51 @@ When deploying over HTTP (not stdio), configure:
 - `MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN` (default: `40`): Per-minute limit for requests missing/invalid auth by IP
 - `MCP_HTTP_MAX_BODY_BYTES` (default: `1048576`): Reject requests larger than this via `413`
 
+## HTTP Deployment
+
+This server exposes an ASGI app at `mcp_folk.server:app` for HTTP deployments.
+
+### Docker
+
+```bash
+docker build -t mcp-folk .
+docker run --rm -p 8000:8000 mcp-folk
+```
+
+The included image:
+
+- Starts `uvicorn mcp_folk.server:app`
+- Binds to `0.0.0.0`
+- Uses `PORT` (default `8000`)
+- Exposes `/health` for container health checks
+
+### Docker Compose
+
+```yaml
+services:
+  mcp-folk:
+    image: mcp-folk
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FOLK_API_KEY: ${FOLK_API_KEY}
+      PORT: 8000
+```
+
+Run it with:
+
+```bash
+docker compose up --build
+```
+
+### Runtime Expectations
+
+- Send `Authorization: Bearer <folk_api_token>` on every request except `/health`
+- Terminate TLS in front of this app when exposing it outside a trusted network
+- If you run a reverse proxy, forward the `Authorization` header unchanged
+- The built-in rate limiter is an in-process safety net for a single instance, not edge protection or DDoS mitigation
+
 ## Available Tools
 
 ### Search (Use First)
