@@ -3,6 +3,7 @@
 from mcp_folk.api_models import (
     Company,
     Group,
+    Interaction,
     Note,
     Person,
     Reminder,
@@ -80,6 +81,28 @@ def test_reminder_model() -> None:
     assert reminder.id == "rem_abc"
     assert reminder.name == "Follow up"
     assert reminder.visibility == Visibility.PRIVATE
+
+
+def test_interaction_model() -> None:
+    """Test Interaction model parsing."""
+    data = {
+        "id": "int_123",
+        "title": "Meeting",
+        "content": "Meeting",
+        "entity": {
+            "id": "per_456",
+            "entityType": "person",
+            "fullName": "Jane Doe",
+        },
+        "dateTime": "2026-01-15T09:00:00Z",
+        "type": "meeting",
+    }
+    interaction = Interaction(**data)
+    assert interaction.id == "int_123"
+    assert interaction.title == "Meeting"
+    assert interaction.content == "Meeting"
+    assert interaction.date_time == "2026-01-15T09:00:00Z"
+    assert interaction.interaction_type == "meeting"
 
 
 def test_group_model() -> None:

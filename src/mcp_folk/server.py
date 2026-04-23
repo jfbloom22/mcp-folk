@@ -13,6 +13,7 @@ import re
 import sys
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from hashlib import sha256
 from importlib.resources import files
@@ -24,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from mcp_folk.api_client import FolkAPIError, FolkClient
+from mcp_folk.api_models import Company, Group, Person
 
 # Folk ID format: prefix + UUID v4 (e.g., "per_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
 _FOLK_ID_RE = re.compile(
@@ -61,7 +63,9 @@ class HTTPPassthroughAuthAndRateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: Any) -> None:
         super().__init__(app)
         self.auth_rate_limit = max(1, int(os.environ.get("MCP_HTTP_RATE_LIMIT_PER_MIN", "120")))
-        self.no_auth_rate_limit = max(1, int(os.environ.get("MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN", "40")))
+        self.no_auth_rate_limit = max(
+            1, int(os.environ.get("MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN", "40"))
+        )
         self.max_body_bytes = max(1, int(os.environ.get("MCP_HTTP_MAX_BODY_BYTES", "1048576")))
         self._requests: dict[str, deque[float]] = {}
 
@@ -87,7 +91,9 @@ class HTTPPassthroughAuthAndRateLimitMiddleware(BaseHTTPMiddleware):
         except ValueError:
             return True
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         if request.url.path == "/health":
             return await call_next(request)
         if self._has_oversized_body(request):
@@ -122,6 +128,29 @@ def _validate_folk_id(value: str, entity: str = "entity") -> None:
             f"Folk IDs are prefix + UUID v4 format (e.g., 'per_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'). "
             f"Call find_person or find_company first to get the correct ID from the search results."
         )
+
+
+def _person_display_name(person: Person) -> str:
+    """Build a stable display name for a person."""
+    if person.full_name:
+        return person.full_name
+
+    parts = [part for part in (person.first_name, person.last_name) if part]
+    return " ".join(parts) if parts else "Unknown"
+
+
+def _company_display_name(company: Company) -> str:
+    """Build a stable display name for a company."""
+    return company.name or "Unknown"
+
+
+def _resolve_group_by_name(groups: list[Group], group_name: str) -> Group | None:
+    """Resolve a group by exact or fuzzy name match."""
+    normalized = group_name.lower()
+    return next((g for g in groups if g.name.lower() == normalized), None) or next(
+        (g for g in groups if normalized in g.name.lower()),
+        None,
+    )
 
 
 # Configure logging to stderr (stdout is for MCP JSON-RPC)
@@ -214,22 +243,11 @@ async def find_person(
 
         matches = []
         for person in people:
-            # Build full name from parts
-            full_name_parts = []
-            if person.first_name:
-                full_name_parts.append(person.first_name)
-            if person.last_name:
-                full_name_parts.append(person.last_name)
-            full_name = " ".join(full_name_parts) or person.full_name or "Unknown"
-
-            # Get primary email if available
-            email = person.emails[0] if person.emails else None
-
             matches.append(
                 {
                     "id": person.id,
-                    "name": full_name,
-                    "email": email,
+                    "name": _person_display_name(person),
+                    "email": person.emails[0] if person.emails else None,
                 }
             )
 
@@ -274,7 +292,7 @@ async def find_company(
             matches.append(
                 {
                     "id": company.id,
-                    "name": company.name,
+                    "name": _company_display_name(company),
                     "industry": company.industry,
                 }
             )
@@ -374,59 +392,50 @@ async def get_company_details(
 
 @mcp.tool()
 async def browse_people(
-    page: int = 1,
-    per_page: int = 20,
+    cursor: str | None = None,
+    limit: int = 20,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Browse all people in the CRM with pagination.
+    """Browse people in the CRM using Folk cursor pagination.
 
     Use this to explore contacts when you don't have a specific name to search.
-    Returns minimal info per person to save tokens.
+    Returns minimal info per person plus the next cursor when available.
 
     Args:
-        page: Page number (starts at 1)
-        per_page: Results per page (max 50)
+        cursor: Cursor from a previous browse response, or None for the first page
+        limit: Results per page (max 50)
 
     Returns:
         {
             "people": [{"id": "...", "name": "...", "email": "..."}],
-            "page": current page,
-            "per_page": results per page,
+            "cursor": input cursor,
+            "next_cursor": cursor for the next page, if any,
+            "limit": results per page,
             "has_more": whether more pages exist
         }
     """
     client = get_client(ctx)
     try:
-        # Clamp per_page to reasonable limit
-        per_page = min(max(per_page, 1), 50)
-
-        # Folk API uses cursor pagination, simulate page-based
-        # For simplicity, we'll fetch and return one page
-        people = await client.list_people(limit=per_page)
+        limit = min(max(limit, 1), 50)
+        people, next_cursor = await client.list_people_page(limit=limit, cursor=cursor)
 
         results = []
         for person in people:
-            full_name_parts = []
-            if person.first_name:
-                full_name_parts.append(person.first_name)
-            if person.last_name:
-                full_name_parts.append(person.last_name)
-            full_name = " ".join(full_name_parts) or person.full_name or "Unknown"
-
             results.append(
                 {
                     "id": person.id,
-                    "name": full_name,
+                    "name": _person_display_name(person),
                     "email": person.emails[0] if person.emails else None,
-                    "company": person.job_title,  # Job title often includes company context
+                    "job_title": person.job_title,
                 }
             )
 
         return {
             "people": results,
-            "page": page,
-            "per_page": per_page,
-            "has_more": len(results) == per_page,  # Approximation
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+            "limit": limit,
+            "has_more": next_cursor is not None,
         }
     except FolkAPIError as e:
         _report_api_error(ctx, e)
@@ -435,47 +444,49 @@ async def browse_people(
 
 @mcp.tool()
 async def browse_companies(
-    page: int = 1,
-    per_page: int = 20,
+    cursor: str | None = None,
+    limit: int = 20,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Browse all companies in the CRM with pagination.
+    """Browse companies in the CRM using Folk cursor pagination.
 
     Use this to explore companies when you don't have a specific name to search.
-    Returns minimal info per company to save tokens.
+    Returns minimal info per company plus the next cursor when available.
 
     Args:
-        page: Page number (starts at 1)
-        per_page: Results per page (max 50)
+        cursor: Cursor from a previous browse response, or None for the first page
+        limit: Results per page (max 50)
 
     Returns:
         {
             "companies": [{"id": "...", "name": "...", "industry": "..."}],
-            "page": current page,
-            "per_page": results per page,
+            "cursor": input cursor,
+            "next_cursor": cursor for the next page, if any,
+            "limit": results per page,
             "has_more": whether more pages exist
         }
     """
     client = get_client(ctx)
     try:
-        per_page = min(max(per_page, 1), 50)
-        companies = await client.list_companies(limit=per_page)
+        limit = min(max(limit, 1), 50)
+        companies, next_cursor = await client.list_companies_page(limit=limit, cursor=cursor)
 
         results = []
         for company in companies:
             results.append(
                 {
                     "id": company.id,
-                    "name": company.name,
+                    "name": _company_display_name(company),
                     "industry": company.industry,
                 }
             )
 
         return {
             "companies": results,
-            "page": page,
-            "per_page": per_page,
-            "has_more": len(results) == per_page,
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+            "limit": limit,
+            "has_more": next_cursor is not None,
         }
     except FolkAPIError as e:
         _report_api_error(ctx, e)
@@ -556,17 +567,7 @@ async def find_people_in_group(
 
         # Resolve group name to ID
         groups = await client.list_groups(limit=100)
-        group = next(
-            (g for g in groups if g.name.lower() == group_name.lower()),
-            None,
-        )
-
-        if not group:
-            # Try fuzzy match
-            group = next(
-                (g for g in groups if group_name.lower() in g.name.lower()),
-                None,
-            )
+        group = _resolve_group_by_name(groups, group_name)
 
         if not group:
             available = [g.name for g in groups[:10]]
@@ -596,20 +597,13 @@ async def find_people_in_group(
 
         results = []
         for person in people:
-            full_name_parts = []
-            if person.first_name:
-                full_name_parts.append(person.first_name)
-            if person.last_name:
-                full_name_parts.append(person.last_name)
-            full_name = " ".join(full_name_parts) or person.full_name or "Unknown"
-
             # Extract custom fields for this group
             group_custom_fields = person.custom_field_values.get(group_id, {})
 
             results.append(
                 {
                     "id": person.id,
-                    "name": full_name,
+                    "name": _person_display_name(person),
                     "email": person.emails[0] if person.emails else None,
                     "job_title": person.job_title,
                     "status": group_custom_fields.get("Status"),
@@ -662,17 +656,7 @@ async def find_companies_in_group(
 
         # Resolve group name to ID
         groups = await client.list_groups(limit=100)
-        group = next(
-            (g for g in groups if g.name.lower() == group_name.lower()),
-            None,
-        )
-
-        if not group:
-            # Try fuzzy match
-            group = next(
-                (g for g in groups if group_name.lower() in g.name.lower()),
-                None,
-            )
+        group = _resolve_group_by_name(groups, group_name)
 
         if not group:
             available = [g.name for g in groups[:10]]
@@ -708,7 +692,7 @@ async def find_companies_in_group(
             results.append(
                 {
                     "id": company.id,
-                    "name": company.name,
+                    "name": _company_display_name(company),
                     "industry": company.industry,
                     "status": group_custom_fields.get("Status"),
                     "custom_fields": group_custom_fields,
@@ -862,16 +846,9 @@ async def update_person(
             job_title=job_title,
         )
 
-        full_name_parts = []
-        if person.first_name:
-            full_name_parts.append(person.first_name)
-        if person.last_name:
-            full_name_parts.append(person.last_name)
-        full_name = " ".join(full_name_parts) or "Unknown"
-
         return {
             "id": person.id,
-            "name": full_name,
+            "name": _person_display_name(person),
             "updated": True,
         }
     except FolkAPIError as e:
@@ -915,7 +892,7 @@ async def update_company(
 
         return {
             "id": company.id,
-            "name": company.name,
+            "name": _company_display_name(company),
             "updated": True,
         }
     except FolkAPIError as e:
@@ -1108,10 +1085,14 @@ async def log_interaction(
     _validate_folk_id(person_id, "person")
     client = get_client(ctx)
     try:
+        interaction_title = interaction_type.replace("_", " ").title()
+        interaction_content = f"{interaction_title} logged at {when}."
         result = await client.create_interaction(
             entity_id=person_id,
             interaction_type=interaction_type,
             occurred_at=when,
+            title=interaction_title,
+            content=interaction_content,
         )
         return {"id": result.id, "logged": True}
     except FolkAPIError as e:

@@ -2,8 +2,9 @@
 
 import os
 from collections.abc import Callable
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 from aiohttp import ClientError
@@ -142,6 +143,19 @@ class FolkClient:
         except ClientError as e:
             raise FolkAPIError(500, f"Network error: {str(e)}") from e
 
+    @staticmethod
+    def _cursor_from_next_link(next_link: str | None) -> str | None:
+        """Extract the next-page cursor from a Folk pagination link."""
+        if not next_link:
+            return None
+
+        parsed = urlparse(next_link)
+        query = parse_qs(parsed.query)
+        cursor = query.get("cursor")
+        if cursor:
+            return cursor[0]
+        return None
+
     # People endpoints
 
     def _serialize_filters(self, filters: dict[str, Any], prefix: str = "filter") -> dict[str, str]:
@@ -185,6 +199,28 @@ class FolkClient:
         data = await self._request("GET", "/people", params=params)
         response = PersonListResponse(**data)
         return response.data.items
+
+    async def list_people_page(
+        self,
+        limit: int = 20,
+        cursor: str | None = None,
+        combinator: str = "and",
+        filters: dict[str, Any] | None = None,
+    ) -> tuple[list[Person], str | None]:
+        """List a page of people and return the next cursor when available."""
+        params: dict[str, Any] = {
+            "limit": limit,
+            "cursor": cursor,
+            "combinator": combinator,
+        }
+
+        if filters:
+            params.update(self._serialize_filters(filters))
+
+        data = await self._request("GET", "/people", params=params)
+        response = PersonListResponse(**data)
+        next_cursor = self._cursor_from_next_link(response.data.pagination.next_link)
+        return response.data.items, next_cursor
 
     async def get_person(self, person_id: str) -> Person:
         """Get a specific person by ID."""
@@ -297,6 +333,28 @@ class FolkClient:
         data = await self._request("GET", "/companies", params=params)
         response = CompanyListResponse(**data)
         return response.data.items
+
+    async def list_companies_page(
+        self,
+        limit: int = 20,
+        cursor: str | None = None,
+        combinator: str = "and",
+        filters: dict[str, Any] | None = None,
+    ) -> tuple[list[Company], str | None]:
+        """List a page of companies and return the next cursor when available."""
+        params: dict[str, Any] = {
+            "limit": limit,
+            "cursor": cursor,
+            "combinator": combinator,
+        }
+
+        if filters:
+            params.update(self._serialize_filters(filters))
+
+        data = await self._request("GET", "/companies", params=params)
+        response = CompanyListResponse(**data)
+        next_cursor = self._cursor_from_next_link(response.data.pagination.next_link)
+        return response.data.items, next_cursor
 
     async def get_company(self, company_id: str) -> Company:
         """Get a specific company by ID."""
@@ -487,8 +545,6 @@ class FolkClient:
             visibility: "public" or "private"
             assigned_user_ids: Optional list of user IDs to assign (required for public)
         """
-        from datetime import datetime
-
         # Parse the ISO datetime
         dt = datetime.fromisoformat(trigger_time.replace("Z", "+00:00"))
         # Convert to UTC
@@ -497,8 +553,7 @@ class FolkClient:
         # Folk API requires iCalendar format with TZID (not Z suffix)
         # Format: DTSTART;TZID=UTC:20260115T090000
         dtstart = dt_utc.strftime("%Y%m%dT%H%M%S")
-        # One-time reminder: RRULE requires FREQ, use FREQ=DAILY;COUNT=1 for single occurrence
-        recurrence_rule = f"DTSTART;TZID=UTC:{dtstart}\nRRULE:FREQ=DAILY;COUNT=1"
+        recurrence_rule = f"DTSTART;TZID=UTC:{dtstart}\nRRULE:COUNT=1"
 
         body: dict[str, Any] = {
             "entity": {"id": entity_id},
@@ -516,33 +571,6 @@ class FolkClient:
             body["assignedUsers"] = [{"id": current_user.id}]
 
         data = await self._request("POST", "/reminders", json_data=body)
-        response = ReminderResponse(**data)
-        return response.data
-
-    async def update_reminder(
-        self,
-        reminder_id: str,
-        name: str | None = None,
-        trigger_time: str | None = None,
-        visibility: str | None = None,
-        recurrence_rule: str | None = None,
-        assigned_user_ids: list[str] | None = None,
-    ) -> Reminder:
-        """Update a reminder."""
-        body: dict[str, Any] = {}
-
-        if name is not None:
-            body["name"] = name
-        if trigger_time is not None:
-            body["triggerTime"] = trigger_time
-        if visibility is not None:
-            body["visibility"] = visibility
-        if recurrence_rule is not None:
-            body["recurrenceRule"] = recurrence_rule
-        if assigned_user_ids is not None:
-            body["assignedUserIds"] = assigned_user_ids
-
-        data = await self._request("PATCH", f"/reminders/{reminder_id}", json_data=body)
         response = ReminderResponse(**data)
         return response.data
 
@@ -630,12 +658,19 @@ class FolkClient:
         entity_id: str,
         interaction_type: str,
         occurred_at: str,
+        title: str | None = None,
+        content: str | None = None,
     ) -> Interaction:
         """Create a new interaction."""
+        interaction_title = title or interaction_type.replace("_", " ").title()
+        interaction_content = content or interaction_title
+
         body: dict[str, Any] = {
             "entity": {"id": entity_id},
-            "interactionType": interaction_type,
-            "occurredAt": occurred_at,
+            "dateTime": occurred_at,
+            "title": interaction_title,
+            "content": interaction_content,
+            "type": interaction_type,
         }
 
         data = await self._request("POST", "/interactions", json_data=body)

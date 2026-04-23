@@ -64,8 +64,8 @@ AI-friendly tools designed for minimal token usage and intent-based operations.
 
 | Tool | Purpose |
 |------|---------|
-| `browse_people(page, per_page)` | Paginated list of all people |
-| `browse_companies(page, per_page)` | Paginated list of all companies |
+| `browse_people(cursor, limit)` | Cursor-based list of all people |
+| `browse_companies(cursor, limit)` | Cursor-based list of all companies |
 
 ### Actions (Tier 4 - Mutations)
 
@@ -85,7 +85,7 @@ AI-friendly tools designed for minimal token usage and intent-based operations.
 | `add_note(person_id, content)` | Add note to person |
 | `get_notes(person_id)` | Get notes for person |
 | `set_reminder(person_id, reminder, when)` | Set a reminder |
-| `log_interaction(person_id, type, when)` | Log an interaction |
+| `log_interaction(person_id, interaction_type, when)` | Log an interaction |
 
 ### Utility
 

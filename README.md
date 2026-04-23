@@ -129,16 +129,16 @@ docker compose up --build
 
 | Tool | Purpose |
 |------|---------|
-| `browse_people(page, per_page)` | Paginated list of all people |
-| `browse_companies(page, per_page)` | Paginated list of all companies |
+| `browse_people(cursor, limit)` | Cursor-based list of people |
+| `browse_companies(cursor, limit)` | Cursor-based list of companies |
 
 ### Groups & Filtering
 
 | Tool | Purpose |
 |------|---------|
 | `list_groups()` | List all groups in the workspace |
-| `find_people_in_group(group_name, status)` | Find people in a group, optionally filtered by Status |
-| `find_companies_in_group(group_name, status)` | Find companies in a group, optionally filtered by Status |
+| `find_people_in_group(group_name, status, custom_field, custom_value)` | Find people in a group, optionally filtered by Status or another custom field |
+| `find_companies_in_group(group_name, status, custom_field, custom_value)` | Find companies in a group, optionally filtered by Status or another custom field |
 
 ### Actions
 
@@ -158,7 +158,7 @@ docker compose up --build
 | `add_note(person_id, content)` | Add note to person |
 | `get_notes(person_id)` | Get notes for person |
 | `set_reminder(person_id, reminder, when)` | Set a reminder |
-| `log_interaction(person_id, type, when)` | Log an interaction |
+| `log_interaction(person_id, interaction_type, when)` | Log an interaction |
 
 ### Utility
 

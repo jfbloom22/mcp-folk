@@ -1,12 +1,12 @@
 """Pydantic models for Folk API responses."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """Entity types in Folk."""
 
     PERSON = "person"
@@ -14,7 +14,7 @@ class EntityType(str, Enum):
     OBJECT = "object"
 
 
-class Visibility(str, Enum):
+class Visibility(StrEnum):
     """Visibility options."""
 
     PUBLIC = "public"
@@ -341,9 +341,11 @@ class Interaction(BaseModel):
     """An interaction in Folk."""
 
     id: str = Field(..., description="Interaction ID")
-    entity_id: str = Field(..., alias="entityId", description="Entity ID")
-    interaction_type: str = Field(..., alias="interactionType", description="Interaction type")
-    occurred_at: str = Field(..., alias="occurredAt", description="When interaction occurred")
+    title: str = Field(..., description="Interaction title")
+    content: str = Field(..., description="Interaction content")
+    entity: EntityReference | None = Field(None, description="Related entity")
+    date_time: str = Field(..., alias="dateTime", description="When interaction occurred")
+    interaction_type: str = Field(..., alias="type", description="Interaction type")
 
 
 class InteractionResponse(BaseModel):

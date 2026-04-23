@@ -111,7 +111,7 @@ class TestCreateReminderIntegration:
             assert body["name"] == "Test reminder"
             assert body["visibility"] == "private"
             assert "DTSTART;TZID=UTC:" in body["recurrenceRule"]
-            assert "\nRRULE:FREQ=DAILY;COUNT=1" in body["recurrenceRule"]
+            assert "\nRRULE:COUNT=1" in body["recurrenceRule"]
             # Private reminders don't need assignedUsers
             assert "assignedUsers" not in body
 
@@ -221,3 +221,65 @@ class TestCreateReminderIntegration:
                 assert expected_dtstart in body["recurrenceRule"], (
                     f"Failed for {trigger_time}: expected {expected_dtstart} in {body['recurrenceRule']}"
                 )
+
+    async def test_create_interaction_request_body(self) -> None:
+        """Test that create_interaction sends the current Folk payload shape."""
+        with patch.object(FolkClient, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "data": {
+                    "id": "int_123",
+                    "title": "Meeting",
+                    "content": "Meeting",
+                    "entity": {"id": "per_456", "entityType": "person", "fullName": "Test"},
+                    "dateTime": "2026-01-15T09:00:00Z",
+                    "type": "meeting",
+                }
+            }
+
+            client = FolkClient(api_key="test_key")
+            await client.create_interaction(
+                entity_id="per_456",
+                interaction_type="meeting",
+                occurred_at="2026-01-15T09:00:00Z",
+            )
+
+            body = mock_request.call_args[1]["json_data"]
+            assert body["entity"] == {"id": "per_456"}
+            assert body["dateTime"] == "2026-01-15T09:00:00Z"
+            assert body["type"] == "meeting"
+            assert body["title"] == "Meeting"
+            assert body["content"] == "Meeting"
+
+    async def test_list_people_page_returns_next_cursor(self) -> None:
+        """Test that list_people_page extracts the next cursor."""
+        with patch.object(FolkClient, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "data": {
+                    "items": [],
+                    "pagination": {
+                        "nextLink": "https://api.folk.app/v1/people?cursor=next-token",
+                    },
+                }
+            }
+
+            client = FolkClient(api_key="test_key")
+            people, next_cursor = await client.list_people_page(limit=5)
+
+            assert people == []
+            assert next_cursor == "next-token"
+
+    async def test_list_companies_page_handles_missing_next_cursor(self) -> None:
+        """Test that list_companies_page handles the end of the list."""
+        with patch.object(FolkClient, "_request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {
+                "data": {
+                    "items": [],
+                    "pagination": {},
+                }
+            }
+
+            client = FolkClient(api_key="test_key")
+            companies, next_cursor = await client.list_companies_page(limit=5)
+
+            assert companies == []
+            assert next_cursor is None

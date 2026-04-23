@@ -1,6 +1,7 @@
 """Tests for HTTP auth, rate limiting, and token propagation."""
 
 from collections.abc import AsyncIterator, Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -53,7 +54,9 @@ def reset_server_client() -> Iterator[None]:
 
 
 @pytest.fixture
-async def middleware(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[server.HTTPPassthroughAuthAndRateLimitMiddleware]:
+async def middleware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[server.HTTPPassthroughAuthAndRateLimitMiddleware]:
     """Create middleware with predictable limits for tests."""
     monkeypatch.setenv("MCP_HTTP_RATE_LIMIT_PER_MIN", "2")
     monkeypatch.setenv("MCP_HTTP_NOAUTH_RATE_LIMIT_PER_MIN", "2")
@@ -175,9 +178,7 @@ async def test_get_client_uses_env_api_key_without_request_token(
     monkeypatch.setenv("FOLK_API_KEY", "env-token")
     client = server.get_client()
     client._session = MagicMock()
-    client._session.request.return_value.__aenter__ = AsyncMock(
-        return_value=MagicMock(status=204)
-    )
+    client._session.request.return_value.__aenter__ = AsyncMock(return_value=MagicMock(status=204))
     client._session.request.return_value.__aexit__ = AsyncMock(return_value=None)
 
     await client._request("DELETE", "/people/per_test")
@@ -206,3 +207,62 @@ async def test_get_client_prefers_request_token_over_env_api_key(
         assert request_headers["Authorization"] == "Bearer request-token"
     finally:
         server._REQUEST_FOLK_TOKEN.reset(token_ctx)
+
+
+@pytest.mark.asyncio
+async def test_browse_people_uses_cursor_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = MagicMock()
+    fake_client.list_people_page = AsyncMock(
+        return_value=(
+            [
+                MagicMock(
+                    id="per_1",
+                    first_name="Jane",
+                    last_name="Doe",
+                    full_name=None,
+                    emails=["jane@example.com"],
+                    job_title="Engineer",
+                )
+            ],
+            "next-token",
+        )
+    )
+    monkeypatch.setattr(server, "get_client", lambda ctx=None: fake_client)
+
+    result = await server.browse_people(cursor="start-token", limit=5)
+
+    assert result["cursor"] == "start-token"
+    assert result["next_cursor"] == "next-token"
+    assert result["limit"] == 5
+    assert result["has_more"] is True
+    assert result["people"] == [
+        {
+            "id": "per_1",
+            "name": "Jane Doe",
+            "email": "jane@example.com",
+            "job_title": "Engineer",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browse_companies_uses_cursor_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = MagicMock()
+    fake_client.list_companies_page = AsyncMock(
+        return_value=([SimpleNamespace(id="com_1", name="Acme Inc", industry="Technology")], None)
+    )
+    monkeypatch.setattr(server, "get_client", lambda ctx=None: fake_client)
+
+    result = await server.browse_companies(cursor=None, limit=10)
+
+    assert result["cursor"] is None
+    assert result["next_cursor"] is None
+    assert result["limit"] == 10
+    assert result["has_more"] is False
+    assert result["companies"] == [
+        {
+            "id": "com_1",
+            "name": "Acme Inc",
+            "industry": "Technology",
+        }
+    ]

@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "@nimblebraininc/folk",
   "version": "0.3.0",
-  "description": "Folk CRM server for managing people, companies, notes, and reminders",
+  "description": "Folk CRM server for managing people, companies, notes, reminders, and interactions",
   "author": {
     "name": "NimbleBrain Inc",
     "email": "hello@nimblebrain.ai"
@@ -53,11 +53,11 @@
     },
     {
       "name": "browse_people",
-      "description": "Browse all people in the CRM with pagination"
+      "description": "Browse all people in the CRM with cursor pagination"
     },
     {
       "name": "browse_companies",
-      "description": "Browse all companies in the CRM with pagination"
+      "description": "Browse all companies in the CRM with cursor pagination"
     },
     {
       "name": "list_groups",
