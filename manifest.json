@@ -1,7 +1,8 @@
 {
   "manifest_version": "0.4",
   "name": "@nimblebraininc/folk",
-  "version": "0.3.2",
+  "display_name": "Folk",
+  "version": "0.3.3",
   "description": "Folk CRM server for managing people, companies, notes, and reminders",
   "author": {
     "name": "NimbleBrain Inc",
