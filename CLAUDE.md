@@ -67,6 +67,8 @@ AI-friendly tools designed for minimal token usage and intent-based operations.
 | `browse_people(cursor, limit)` | Cursor-based list of all people |
 | `browse_companies(cursor, limit)` | Cursor-based list of all companies |
 
+Start with `cursor=None`, then pass the returned `next_cursor` into the next call.
+
 ### Actions (Tier 4 - Mutations)
 
 | Tool | Purpose |

@@ -132,6 +132,18 @@ docker compose up --build
 | `browse_people(cursor, limit)` | Cursor-based list of people |
 | `browse_companies(cursor, limit)` | Cursor-based list of companies |
 
+Start with `cursor=None`, then keep passing `next_cursor` from the prior response:
+
+```json
+{
+  "people": [],
+  "cursor": null,
+  "next_cursor": "next-token",
+  "limit": 20,
+  "has_more": true
+}
+```
+
 ### Groups & Filtering
 
 | Tool | Purpose |

@@ -32,6 +32,17 @@ Done. One call.
 
 Do NOT start with `find_person` or `browse_people` for group queries.
 
+## Quick Start: Browsing Contacts
+
+When user wants to browse people or companies without a specific search term:
+
+```
+Step 1: browse_people(cursor=None, limit=20)
+Step 2: if next_cursor is returned, call browse_people(cursor=next_cursor, limit=20)
+```
+
+Use `browse_companies(cursor=None, limit=20)` the same way for companies.
+
 ## Situational Handling
 
 ### Situation: User asks about a group, pipeline, view, or status
@@ -130,6 +141,7 @@ find_person("John") returns 3 matches -> list them, ask which one.
 | Wrong | Right |
 |-------|-------|
 | `find_person` or `browse_people` then manually filter for group/status | `find_people_in_group` with status parameter |
+| Calling `browse_people` again without using `next_cursor` | Pass `next_cursor` into the next `browse_people(cursor=...)` call |
 | Fetching `get_person_details` on multiple people to find custom fields | `find_people_in_group` returns status and custom fields directly |
 | Calling `get_person_details` just to check if someone exists | Use `find_person` (minimal payload) |
 | Creating a person without searching first | Always `find_person` first to avoid duplicates |
