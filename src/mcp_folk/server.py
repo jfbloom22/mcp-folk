@@ -813,6 +813,8 @@ async def update_person(
     email: str | None = None,
     phone: str | None = None,
     job_title: str | None = None,
+    group_id: str | None = None,
+    custom_field_values: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Update an existing person's information.
@@ -827,15 +829,47 @@ async def update_person(
         email: New email (replaces existing)
         phone: New phone (replaces existing)
         job_title: New job title
+        group_id: Group containing the custom fields being updated. Required with
+            custom_field_values; the person must already belong to this group.
+        custom_field_values: Values to set for fields in group_id. For example,
+            to set a single-select Status field, use group_id="grp_..." and
+            custom_field_values={"Status": "Active"}. This is sent to Folk as
+            {"customFieldValues": {"grp_...": {"Status": "Active"}}}.
 
     Returns:
         {"id": "...", "name": "...", "updated": true}
     """
     _validate_folk_id(person_id, "person")
+    if custom_field_values is None and group_id is not None:
+        raise ValueError("group_id can only be used together with custom_field_values.")
+    if custom_field_values is not None:
+        if group_id is None:
+            raise ValueError("group_id is required when updating group-scoped custom fields.")
+        _validate_folk_id(group_id, "group")
+        if not custom_field_values:
+            raise ValueError("custom_field_values must contain at least one field value.")
+        if any(not isinstance(name, str) or not name.strip() for name in custom_field_values):
+            raise ValueError("custom_field_values keys must be non-empty custom field names.")
+
     client = get_client(ctx)
     try:
         emails = [email] if email else None
         phones = [phone] if phone else None
+        group_ids: list[str] | None = None
+        custom_fields: dict[str, Any] | None = None
+
+        if custom_field_values is not None:
+            # Folk validates that every customFieldValues group ID is also sent in
+            # groups. Fetch current membership and send the complete list so this
+            # update cannot remove the person's other group memberships.
+            existing_person = await client.get_person(person_id)
+            group_ids = [group.id for group in existing_person.groups]
+            if group_id not in group_ids:
+                raise ValueError(
+                    f"Person '{person_id}' is not a member of group '{group_id}'. "
+                    "Add the person to that group before updating its custom fields."
+                )
+            custom_fields = {group_id: custom_field_values}
 
         person = await client.update_person(
             person_id=person_id,
@@ -844,6 +878,8 @@ async def update_person(
             emails=emails,
             phones=phones,
             job_title=job_title,
+            group_ids=group_ids,
+            custom_fields=custom_fields,
         )
 
         return {

@@ -1,7 +1,14 @@
-> [!WARNING]
-> **This repository is archived and no longer maintained.**
+> [!CAUTION]
+> **DEPRECATED — Workplace Labs retired this fork (2026-09-03).**
 >
-> This MCP server has been removed from the [mpak registry](https://mpak.dev).
+> Use Folk's **official MCP** instead: **`https://mcp.folk.app/mcp`** (OAuth 2.1).
+>
+> Docs: [Folk MCP connect](https://developer.folk.app/mcp/connect) · [Supported tools](https://developer.folk.app/mcp/tools)
+>
+> This repo is archived. The hosted endpoint `https://mcp.workplacelabs.io/folk` is being removed from WL infrastructure. WL workspace agents now use the **folk** skill and official `folk_*` tools.
+
+> [!WARNING]
+> **Upstream lineage:** Originally from [NimbleBrainInc/mcp-folk](https://github.com/NimbleBrainInc/mcp-folk). Removed from the [mpak registry](https://mpak.dev).
 
 ---
 
@@ -165,10 +172,25 @@ Start with `cursor=None`, then keep passing `next_cursor` from the prior respons
 |------|---------|
 | `add_person(first_name, ...)` | Create new person |
 | `add_company(name, ...)` | Create new company |
-| `update_person(person_id, ...)` | Update person fields |
+| `update_person(person_id, ...)` | Update person fields and group-scoped custom fields |
 | `update_company(company_id, ...)` | Update company fields |
 | `delete_person(person_id)` | Delete a person |
 | `delete_company(company_id)` | Delete a company |
+
+To update a group-scoped single-select field, provide its group ID and the field
+values. The person must already be a member of that group; the tool preserves all
+of their existing group memberships:
+
+```python
+update_person(
+    person_id="per_12345678-1234-1234-1234-123456789abc",
+    group_id="grp_12345678-1234-1234-1234-123456789abc",
+    custom_field_values={"Status": "Active"},
+)
+```
+
+This sends Folk `customFieldValues` in the documented shape:
+`{"grp_...": {"Status": "Active"}}`.
 
 ### Notes & Reminders
 

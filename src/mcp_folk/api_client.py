@@ -295,7 +295,10 @@ class FolkClient:
         if description is not None:
             body["description"] = description
         if group_ids is not None:
-            body["groupIds"] = group_ids
+            # Folk's update endpoint expects group references, not a groupIds key.
+            # Supplying the complete list preserves memberships because groups are
+            # a replace-on-update field in the Folk API.
+            body["groups"] = [{"id": group_id} for group_id in group_ids]
         if company_ids is not None:
             body["companyIds"] = company_ids
         if custom_fields is not None:

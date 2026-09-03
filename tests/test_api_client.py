@@ -8,6 +8,26 @@ import pytest
 from mcp_folk.api_client import FolkClient
 
 
+@pytest.mark.asyncio
+async def test_update_person_uses_documented_groups_and_custom_field_values_shape() -> None:
+    """Folk requires custom-field group IDs to also appear in groups."""
+    with patch.object(FolkClient, "_request", new_callable=AsyncMock) as mock_request:
+        mock_request.return_value = {"data": {"id": "per_123", "groups": []}}
+        client = FolkClient(api_key="test_key")
+
+        await client.update_person(
+            "per_123",
+            group_ids=["grp_abc"],
+            custom_fields={"grp_abc": {"Status": "Active"}},
+        )
+
+    assert mock_request.call_args.args == ("PATCH", "/people/per_123")
+    assert mock_request.call_args.kwargs["json_data"] == {
+        "groups": [{"id": "grp_abc"}],
+        "customFieldValues": {"grp_abc": {"Status": "Active"}},
+    }
+
+
 class TestReminderRecurrenceRule:
     """Tests for reminder recurrenceRule format generation."""
 
